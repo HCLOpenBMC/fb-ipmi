@@ -30,10 +30,59 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+namespace fb_ipmi
+{
+	static boost::asio::io_service io;
+	std::shared_ptr<sdbusplus::asio::connection> conn;
+	static std::shared_ptr<sdbusplus::asio::dbus_interface> hostIface;
+	std::string node = "0";
+	
+};
 
 int main(int argc, char* argv[])
 {
     std::cerr <<  "dharshan Facebook Ipmi service ...\n";
+	
+	fb_ipmi::conn =
+        std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
+	
+	fb_ipmi::conn->request_name("xyz.openbmc_project.State.Ipmi");
+	
+
+	// Power Control Service
+    sdbusplus::asio::object_server hostServer =
+        sdbusplus::asio::object_server(fb_ipmi::conn);
+
+    // Power Control Interface
+    fb_ipmi::hostIface = hostServer.add_interface(
+        "/xyz/openbmc_project/state/ipmi", "xyz.openbmc_project.State.Ipmi");
+
+    fb_ipmi::hostIface->register_property(
+        "RequestedHostTransition",
+        std::string("xyz.openbmc_project.State.Ipmi.Transition.Off"),
+        [](const std::string& requested, std::string& resp) {
+            if (requested == "xyz.openbmc_project.State.Ipmi.Transition.Off")
+            {
+			std::cerr << "Host" << fb_ipmi::node << ": " <<  "Off Requeset...\n";
+            }
+            else if (requested ==
+                     "xyz.openbmc_project.State.Ipmi.Transition.On")
+            {
+				std::cerr << "Host" << fb_ipmi::node << ": " <<  "Off Requeset...\n";
+            }
+            else 
+            {
+			std::cerr << "Host" << fb_ipmi::node << ": " <<  "Unrecognized host state transition request.\n";
+                throw std::invalid_argument("Unrecognized Transition Request");
+                return 0;
+            }
+            resp = requested;
+            return 1;
+        });
+    fb_ipmi::hostIface->initialize();
+
+	fb_ipmi::io.run();
+
 
 	return 0;
 
