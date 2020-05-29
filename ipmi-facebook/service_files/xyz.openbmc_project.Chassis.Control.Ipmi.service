@@ -1,0 +1,13 @@
+[Unit]
+Description=Facebook Ipmi Read
+
+[Service]
+Restart=always
+RestartSec=3
+ExecStart=/usr/bin/fb-ipmi
+Type=dbus
+BusName=xyz.openbmc_project.State.Ipmi
+
+[Install]
+WantedBy=sysinit.target
+
