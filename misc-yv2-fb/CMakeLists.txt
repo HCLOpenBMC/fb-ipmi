@@ -10,7 +10,7 @@ add_definitions(-DBOOST_NO_RTTI)
 add_definitions(-DBOOST_NO_TYPEID)
 add_definitions(-DBOOST_ASIO_DISABLE_THREADS)
 
-set(SRC_FILES src/fb_ipmi.cpp)
+set(SRC_FILES src/fb_yv2_misc.cpp)
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME} -lstdc++fs)
