@@ -4,7 +4,7 @@ Description=Facebook Ipmi Read
 [Service]
 Restart=always
 RestartSec=3
-ExecStart=/usr/bin/fb-ipmi
+ExecStart=/usr/bin/fb-yv2-misc
 Type=dbus
 BusName=xyz.openbmc_project.State.Ipmi
 
