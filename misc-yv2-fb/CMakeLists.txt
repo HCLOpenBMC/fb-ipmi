@@ -25,6 +25,6 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
 
 set(
   SERVICE_FILES
-  ${PROJECT_SOURCE_DIR}/service_files/xyz.openbmc_project.Chassis.Control.Ipmi.service
+  ${PROJECT_SOURCE_DIR}/service_files/xyz.openbmc_project.Chassis.Control.Misc.service
   )
 install(FILES ${SERVICE_FILES} DESTINATION /lib/systemd/system/)
