@@ -331,12 +331,12 @@ int main(int argc, char* argv[])
 	
 	fb_ipmi::conn->request_name("xyz.openbmc_project.Misc.Ipmi");
 
-	/*int net = 0x38;
+	int net = 0x38;
 	int cmd = 3;
 	std::vector<uint8_t> cmdData;
 	std::vector<uint8_t> respData; 
 	
-	fb_ipmi::sendMeCmd(net,cmd,cmdData,respData); */
+	fb_ipmi::sendMeCmd(net,cmd,cmdData,respData);
 
 	// Request POWER_BUTTON GPIO events
     if (!fb_ipmi::requestGPIOEvents(
