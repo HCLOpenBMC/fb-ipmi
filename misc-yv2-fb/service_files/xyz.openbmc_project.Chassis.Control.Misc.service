@@ -1,5 +1,6 @@
 [Unit]
 Description=Facebook Misc Ipmi Read
+Wants=ipmb.service
 After=ipmb.service
 
 [Service]

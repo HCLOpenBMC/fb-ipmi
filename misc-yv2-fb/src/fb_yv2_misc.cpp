@@ -29,24 +29,19 @@
 #include <string_view>
 #include <vector>
 #include <nlohmann/json.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <chrono>
 
 namespace fb_ipmi
 {
 static boost::asio::io_service io;
 std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscIface;
+
 using respType = std::tuple<int, uint8_t, uint8_t, uint8_t, uint8_t, std::vector<uint8_t>>;
 static constexpr uint8_t lun = 0;
-static const uint8_t meAddress = 1;
-
-
-uint8_t dataArray[] = { 0x15,0xa0,0x0 };
-int dataSize = 3;
-uint8_t netFn = 0x38;
-uint8_t cmd = 3;
-
-std::vector<uint8_t> cmdData;
-std::vector<uint8_t> respData; 
+static constexpr uint8_t CPUPwrGdMask = 0x01;
+static constexpr uint8_t PCHPwrGdMask = 0x02;
 
 // GPIO Lines and Event Descriptors
 static gpiod::line powerButtonLine;
@@ -92,7 +87,7 @@ static bool requestGPIOEvents(
         std::cerr << "Failed to get " << name << " fd\n";
         return false;
     }
-    gpioEventDescriptor.assign(gpioLineFd);
+	gpioEventDescriptor.assign(gpioLineFd);
 
     gpioEventDescriptor.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
@@ -113,10 +108,10 @@ static void updateHandSwitchPosition()
 {
     std::cerr<<"updateHandSwitchPosition started...\n";
     int position = 0x0;
-    int line1 = HandSwitch1Line.get_value();
-    int line2 = HandSwitch2Line.get_value();
-    int line3 = HandSwitch3Line.get_value();
-    int line4 = HandSwitch4Line.get_value();
+	int line1 = HandSwitch1Line.get_value();
+	int line2 = HandSwitch2Line.get_value();
+	int line3 = HandSwitch3Line.get_value();
+	int line4 = HandSwitch4Line.get_value();
 
     position = (position & 0xE) | (line1 << 0); 
     position = (position & 0xD) | (line2 << 1); 
@@ -124,10 +119,6 @@ static void updateHandSwitchPosition()
     position = (position & 0x7) | (line4 << 3); 
     position +=1;
 
-    miscIface->set_property("HAND_SW1",line1);
-    miscIface->set_property("HAND_SW2",line2);
-    miscIface->set_property("HAND_SW3",line3);
-    miscIface->set_property("HAND_SW4",line4);
     miscIface->set_property("Position",position);
     std::cerr<<"Position :"<<position<<"\n";    
 }
@@ -138,7 +129,7 @@ static void HandSwitch1Handler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
-        updateHandSwitchPosition();
+		updateHandSwitchPosition();
     }
     if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
@@ -236,30 +227,30 @@ static void HandSwitch4Handler()
 
 static void powerButtonHandler()
 {
-    gpiod::line_event gpioLineEvent = powerButtonLine.event_read();
+	gpiod::line_event gpioLineEvent = powerButtonLine.event_read();
 
-    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
-    {
-        std::cerr << "power button pressed = 1 \n"; 
-        updateHandSwitchPosition();
-        miscIface->set_property("PowerButtonPressed", 1);
-    }
-    else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
-    {
-        std::cerr << "power button pressed = 0 \n"; 
-        miscIface->set_property("PowerButtonPressed", 0);
-    }
-    powerButtonEvent.async_wait(
-        boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code ec) {
-            if (ec)
-            {
-                std::cerr << "power button handler error: " << ec.message()
-                          << "\n";
-                return;
-            }
-            powerButtonHandler();
-        });
+	if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
+	{
+		std::cerr << "power button pressed = 1 \n"; 
+		updateHandSwitchPosition();
+		miscIface->set_property("PowerButtonPressed", 1);
+	}
+	else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
+	{
+		std::cerr << "power button pressed = 0 \n"; 
+		miscIface->set_property("PowerButtonPressed", 0);
+	}
+	powerButtonEvent.async_wait(
+		boost::asio::posix::stream_descriptor::wait_read,
+		[](const boost::system::error_code ec) {
+			if (ec)
+			{
+				std::cerr << "power button handler error: " << ec.message()
+						  << "\n";
+				return;
+			}
+			powerButtonHandler();
+		});
 }
 
 
@@ -269,13 +260,13 @@ static void resetButtonHandler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
-        std::cerr << "Reset button pressed = 1 \n"; 
-        updateHandSwitchPosition();
+		std::cerr << "Reset button pressed = 1 \n"; 
+		updateHandSwitchPosition();
         miscIface->set_property("ResetButtonPressed", 1);
     }
     else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
-        std::cerr << "Reset button pressed = 0 \n"; 
+		std::cerr << "Reset button pressed = 0 \n"; 
         miscIface->set_property("ResetButtonPressed", 0);
     }
     resetButtonEvent.async_wait(
@@ -292,25 +283,20 @@ static void resetButtonHandler()
 }
 
 
-int sendMeCmd()
+int sendIPMBRequest(uint8_t host, uint8_t netFn, uint8_t cmd, std::vector<uint8_t> &cmdData,
+              std::vector<uint8_t> &respData)
 {
-
-        std::cout << "ME NetFn:cmd " << (int)netFn << ":" << (int)cmd << "\n" << std::flush;
-        std::cout << "ME req data: " << std::flush;
-
-    cmdData.reserve(cmdData.size() + dataSize);
-    std::copy(&dataArray[0], &dataArray[dataSize], back_inserter(cmdData));
 
     auto method = conn->new_method_call("xyz.openbmc_project.Ipmi.Channel.Ipmb",
                                        "/xyz/openbmc_project/Ipmi/Channel/Ipmb",
                                        "org.openbmc.Ipmb", "sendRequest");
-    method.append(meAddress, netFn, lun, cmd, cmdData);
+    method.append(host, netFn, lun, cmd, cmdData);
 
     auto reply = conn->call(method);
     if (reply.is_method_error())
     {    
         phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Error reading from ME");
+            "Error reading from IPMB");
         return -1;
     }    
 
@@ -320,32 +306,46 @@ int sendMeCmd()
     respData =
         std::move(std::get<std::remove_reference_t<decltype(respData)>>(resp));
 
-    std::cout << "ME resp data: " << std::flush;
-    for (auto d : respData)
-    {
-        std::cout << int(d) << " " << std::flush;
-    }
-    std::cout << "\n" << std::flush;
-
     return 0;
 }
 
+static int getPowerGoodStatus(uint8_t host)
+{
+    int netFn = 0x38;
+    int cmd = 3;
+    std::vector<uint8_t> cmdData{0x15,0xa0,0};
+    std::vector<uint8_t> respData; 
+
+    sendIPMBRequest(host, netFn, cmd, cmdData, respData);
+    uint8_t GpiosStatus = respData[3];
+    int pwrGdStatusFromIPMI = (GpiosStatus & CPUPwrGdMask) && (GpiosStatus & PCHPwrGdMask);
+    return pwrGdStatusFromIPMI;
+}
+
+static void  powerGoodHandler()
+{
+    //std::cerr<<"Check power good handler\n";
+    boost::asio::steady_timer timer{fb_ipmi::io, std::chrono::seconds{1}};
+    timer.async_wait([](const boost::system::error_code &ec)
+    {
+        miscIface->set_property("POWER_GOOD1", getPowerGoodStatus(0));
+        miscIface->set_property("POWER_GOOD2", getPowerGoodStatus(1));
+    });
+    powerGoodHandler();
+}
 
 };
 
 int main(int argc, char* argv[])
 {
     std::cerr <<  "Facebook Misc Ipmi service ....\n";
-    
-    fb_ipmi::conn =
+	
+	fb_ipmi::conn =
         std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
-    
-    fb_ipmi::conn->request_name("xyz.openbmc_project.Misc.Ipmi");
+	
+	fb_ipmi::conn->request_name("xyz.openbmc_project.Misc.Ipmi");
 
-    
-    fb_ipmi::sendMeCmd();
-
-    // Request POWER_BUTTON GPIO events
+	// Request POWER_BUTTON GPIO events
     if (!fb_ipmi::requestGPIOEvents(
             "MULTI_HOST_POWER_BUTTON", fb_ipmi::powerButtonHandler,
             fb_ipmi::powerButtonLine, fb_ipmi::powerButtonEvent))
@@ -359,15 +359,15 @@ int main(int argc, char* argv[])
             fb_ipmi::resetButtonLine, fb_ipmi::resetButtonEvent))
     {
         return -1;
-    }   
+    }	
 
     // Request HAND_SW1 GPIO events
     if (!fb_ipmi::requestGPIOEvents(
             "HAND_SW1", fb_ipmi::HandSwitch1Handler,
             fb_ipmi::HandSwitch1Line, fb_ipmi::HandSwitch1Event))
     {
-        return -1;
-    }   
+        return -1 , true;
+    }	
 
     // Request HAND_SW1 GPIO events
     if (!fb_ipmi::requestGPIOEvents(
@@ -375,7 +375,7 @@ int main(int argc, char* argv[])
             fb_ipmi::HandSwitch2Line, fb_ipmi::HandSwitch2Event))
     {
         return -1;
-    }   
+    }	
 
     // Request HAND_SW1 GPIO events
     if (!fb_ipmi::requestGPIOEvents(
@@ -383,7 +383,7 @@ int main(int argc, char* argv[])
             fb_ipmi::HandSwitch3Line, fb_ipmi::HandSwitch3Event))
     {
         return -1;
-    }   
+    }	
 
     // Request HAND_SW1 GPIO events
     if (!fb_ipmi::requestGPIOEvents(
@@ -391,9 +391,13 @@ int main(int argc, char* argv[])
             fb_ipmi::HandSwitch4Line, fb_ipmi::HandSwitch4Event))
     {
         return -1;
-    }   
-    
-    // Power Control Service
+    }	
+
+    //Call Power Good Handler
+    fb_ipmi::powerGoodHandler();
+
+    std::cerr<<"After function powerGoodHandler \n";
+	// Power Control Service
     sdbusplus::asio::object_server miscServer =
         sdbusplus::asio::object_server(fb_ipmi::conn);
 
@@ -401,25 +405,21 @@ int main(int argc, char* argv[])
     fb_ipmi::miscIface = miscServer.add_interface(
         "/xyz/openbmc_project/misc/ipmi", "xyz.openbmc_project.Misc.Ipmi");
 
-    fb_ipmi::miscIface->register_property("PowerButtonPressed",
+	fb_ipmi::miscIface->register_property("PowerButtonPressed",
                                           int(0),sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property("ResetButtonPressed",
+	fb_ipmi::miscIface->register_property("ResetButtonPressed",
                                           int(0),sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
-        "HAND_SW1", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+        "Power_Good1", int(0),sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
-        "HAND_SW2", int(0),sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "HAND_SW3", int(0),sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "HAND_SW4", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+        "Power_Good2", int(0),sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
         "Position", int(0),sdbusplus::asio::PropertyPermission::readWrite);
 
     fb_ipmi::miscIface->initialize();
 
-    fb_ipmi::io.run();
+	fb_ipmi::io.run();
 
-    return 0;
+	return 0;
 }
 
