@@ -13,7 +13,7 @@ add_definitions(-DBOOST_ASIO_DISABLE_THREADS)
 set(SRC_FILES src/fb_yv2_misc.cpp)
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
-target_link_libraries(${PROJECT_NAME} -lstdc++fs)
+target_link_libraries(${PROJECT_NAME} -lstdc++fs -lpthread)
 target_link_libraries(${PROJECT_NAME} gpiodcxx)
 target_link_libraries(${PROJECT_NAME} systemd)
 target_link_libraries(${PROJECT_NAME} sdbusplus)

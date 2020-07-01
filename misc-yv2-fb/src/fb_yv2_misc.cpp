@@ -18,6 +18,7 @@
 #include <systemd/sd-journal.h>
 
 #include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/container/flat_set.hpp>
 #include <gpiod.hpp>
@@ -25,36 +26,24 @@
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string_view>
 #include <vector>
 
-// postcode
-#include <sys/time.h>
-#include <time.h>
-#include <unistd.h>
-
-#include <thread>
-
 namespace fb_ipmi
 {
 static boost::asio::io_service io;
 std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscIface;
+
 using respType =
     std::tuple<int, uint8_t, uint8_t, uint8_t, uint8_t, std::vector<uint8_t>>;
 static constexpr uint8_t lun = 0;
-static const uint8_t meAddress = 1;
-
-uint8_t dataArray[] = {0x15, 0xa0, 0x0};
-int dataSize = 3;
-uint8_t netFn = 0x38;
-uint8_t cmd = 3;
-
-std::vector<uint8_t> cmdData;
-std::vector<uint8_t> respData;
+static constexpr uint8_t CPUPwrGdMask = 0x01;
+static constexpr uint8_t PCHPwrGdMask = 0x02;
 
 // GPIO Lines and Event Descriptors
 static gpiod::line powerButtonLine;
@@ -132,10 +121,6 @@ static void updateHandSwitchPosition()
     position = (position & 0x7) | (line4 << 3);
     position += 1;
 
-    miscIface->set_property("HAND_SW1", line1);
-    miscIface->set_property("HAND_SW2", line2);
-    miscIface->set_property("HAND_SW3", line3);
-    miscIface->set_property("HAND_SW4", line4);
     miscIface->set_property("Position", position);
     std::cerr << "Position :" << position << "\n";
 }
@@ -296,27 +281,22 @@ static void resetButtonHandler()
         });
 }
 
-int sendMeCmd()
+int sendIPMBRequest(uint8_t host, uint8_t netFn, uint8_t cmd,
+                    std::vector<uint8_t>& cmdData,
+                    std::vector<uint8_t>& respData)
 {
-
-    std::cout << "ME NetFn:cmd " << (int)netFn << ":" << (int)cmd << "\n"
-              << std::flush;
-    std::cout << "ME req data: " << std::flush;
-
-    cmdData.reserve(cmdData.size() + dataSize);
-    std::copy(&dataArray[0], &dataArray[dataSize], back_inserter(cmdData));
 
     auto method =
         conn->new_method_call("xyz.openbmc_project.Ipmi.Channel.Ipmb",
                               "/xyz/openbmc_project/Ipmi/Channel/Ipmb",
                               "org.openbmc.Ipmb", "sendRequest");
-    method.append(meAddress, netFn, lun, cmd, cmdData);
+    method.append(host, netFn, lun, cmd, cmdData);
 
     auto reply = conn->call(method);
     if (reply.is_method_error())
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Error reading from ME");
+            "Error reading from IPMB");
         return -1;
     }
 
@@ -326,22 +306,33 @@ int sendMeCmd()
     respData =
         std::move(std::get<std::remove_reference_t<decltype(respData)>>(resp));
 
-    std::cout << "ME resp data: " << std::flush;
-    for (auto d : respData)
-    {
-        std::cout << int(d) << " " << std::flush;
-    }
-    std::cout << "\n" << std::flush;
-
     return 0;
 }
-}; // namespace fb_ipmi
 
-class postCode
+static void setGpioConfiguration(uint8_t host)
 {
+    int netFn = 0x38;
+    int cmd = 0x6;
+    std::vector<uint8_t> cmdData{
+        0x15, 0xa0, 0x0, 0x03, 0x0, 0x0, 0x0, 0x0, 0x09,
+    };
+    std::vector<uint8_t> respData;
 
-  public:
-};
+    sendIPMBRequest(host, netFn, cmd, cmdData, respData);
+    int GpiosStatus = respData[0];
+    std::cerr << "setGpioConfiguration Response: " << GpiosStatus << "\n"
+              << std::flush;
+}
+
+static void BICInit()
+{
+    int MAX_HOST = 2;
+    for (int host = 0; host < MAX_HOST; host++)
+    {
+        setGpioConfiguration(host);
+    }
+}
+}; // namespace fb_ipmi
 
 #define GPIO_VAL "/sys/class/gpio/gpio%d/value"
 #define GPIO_BASE_NUM 280
@@ -453,7 +444,7 @@ int pal_get_hand_sw_physically(uint8_t* pos)
     void* gpio_reg;
     uint8_t loc;
 
-     std::cout << "pal_get_hand_sw_physically()" << std::endl;
+    std::cout << "pal_get_hand_sw_physically()" << std::endl;
 
     if (!m_gpio_hand_sw)
     {
@@ -503,7 +494,7 @@ int pal_get_hand_sw(uint8_t* pos)
     uint8_t loc;
     int ret;
 
-     std::cout << "pal_get_hand_sw()" << std::endl;
+    std::cout << "pal_get_hand_sw()" << std::endl;
 
 #if 0
     ret = kv_get("spb_hand_sw", value, NULL, 0); //TODO
@@ -530,7 +521,7 @@ static int read_device(const char* device, int* value)
     FILE* fp;
     int rc;
 
-     std::cout << "read_device()" << std::endl;
+    std::cout << "read_device()" << std::endl;
 
     fp = fopen(device, "r");
     if (!fp)
@@ -591,7 +582,7 @@ int is_debug_card_prsnt(uint8_t* status)
     int val;
     char path[64] = {0};
 
-     std::cout << "is_debug_card_prsnt()" << std::endl;
+    std::cout << "is_debug_card_prsnt()" << std::endl;
 
     sprintf(path, GPIO_VAL, GPIO_DBG_CARD_PRSNT);
 
@@ -645,7 +636,7 @@ uint8_t is_bic_ready(uint8_t slot_id)
     int val;
     char path[64] = {0};
 
-     std::cout << "is_bic_ready()" << std::endl;
+    std::cout << "is_bic_ready()" << std::endl;
 
     if (slot_id < 1 || slot_id > 4)
     {
@@ -676,9 +667,9 @@ int bic_ipmb_wrapper(uint8_t slot_id, uint8_t netFn, uint8_t cmd,
     uint8_t ret;
     uint8_t bicAddr;
     int retry = 0;
-  
-     std::cout << "bic_ipmb_wrapper()" << std::endl;
-   
+
+    std::cout << "bic_ipmb_wrapper()" << std::endl;
+
     if (!is_bic_ready(slot_id))
     {
         return -1;
@@ -934,7 +925,7 @@ int post_handle(uint8_t slot, uint8_t status)
     // No debug card  present, return
     if (!prsnt)
     {
-       // return 0;
+        // return 0;
     }
 
     // Get the hand switch position
@@ -968,7 +959,7 @@ int bic_get_post_buf(uint8_t slot_id, uint8_t* buf, uint8_t* len)
     uint8_t rlen = 0;
     int ret;
 
-     std::cout << "bic_get_post_buf()" << std::endl;
+    std::cout << "bic_get_post_buf()" << std::endl;
 #if 0
     ret = bic_ipmb_wrapper(slot_id, NETFN_OEM_1S_REQ, CMD_OEM_1S_GET_POST_BUF,
                            tbuf, 0x03, rbuf, &rlen);
@@ -989,12 +980,12 @@ int post_get_last(uint8_t slot, uint8_t* status)
     uint8_t buf[MAX_IPMB_RES_LEN] = {0x0};
     uint8_t len;
 
-     std::cout << "post_get_last()" << std::endl;
+    std::cout << "post_get_last()" << std::endl;
 
     ret = bic_get_post_buf(slot, buf, &len);
     if (ret)
     {
-        //return ret;
+        // return ret;
     }
 
     // The post buffer is LIFO and the first byte gives the latest post code
@@ -1031,7 +1022,7 @@ int bic_set_config(uint8_t slot_id, bic_config_t* cfg)
     std::vector<uint8_t> rbuf;
     uint8_t rlen = 0;
     int ret;
-   
+
     std::cout << "bic_set_config()" << std::endl;
 #if 0
 
@@ -1051,7 +1042,7 @@ int post_enable(uint8_t slot)
     int ret;
     bic_config_t config = {0};
 
-     std::cout << "post_enable()" << std::endl;
+    std::cout << "post_enable()" << std::endl;
 
     ret = bic_get_config(slot, &config);
     if (ret)
@@ -1060,10 +1051,10 @@ int post_enable(uint8_t slot)
         std::cout << "post_enable: bic_get_config failed for fru:" << slot
                   << std::endl;
 
-        //return ret;
+        // return ret;
     }
 
-    //if (0 == config.post)
+    // if (0 == config.post)
     {
         config.post = 1;
         ret = bic_set_config(slot, &config);
@@ -1094,7 +1085,7 @@ static int control_sol_txd(uint8_t slot, uint8_t dis_tx)
         return -1;
     }
 
-     std::cout << "control_sol_txd()" << std::endl;
+    std::cout << "control_sol_txd()" << std::endl;
 
     scu_reg = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, scu_fd,
                    AST_SCU_BASE);
@@ -1178,7 +1169,7 @@ int pal_switch_uart_mux(uint8_t slot)
     uint8_t prsnt;
     int ret;
 
-     std::cout << "pal_switch_uart_mux()" << std::endl;
+    std::cout << "pal_switch_uart_mux()" << std::endl;
 
     ret = is_debug_card_prsnt(&prsnt);
     if (ret)
@@ -1226,7 +1217,7 @@ int pal_switch_uart_mux(uint8_t slot)
     ret = control_sol_txd(slot, prsnt);
     if (ret)
     {
-        //goto uart_exit;
+        // goto uart_exit;
     }
 
     // Enable Debug card path
@@ -1234,28 +1225,28 @@ int pal_switch_uart_mux(uint8_t slot)
     ret = write_device(path, gpio_uart_sel2);
     if (ret)
     {
-        //goto uart_exit;
+        // goto uart_exit;
     }
 
     sprintf(path, GPIO_VAL, GPIO_UART_SEL1);
     ret = write_device(path, gpio_uart_sel1);
     if (ret)
     {
-        //goto uart_exit;
+        // goto uart_exit;
     }
 
     sprintf(path, GPIO_VAL, GPIO_UART_SEL0);
     ret = write_device(path, gpio_uart_sel0);
     if (ret)
     {
-        //goto uart_exit;
+        // goto uart_exit;
     }
 
     sprintf(path, GPIO_VAL, GPIO_UART_RX);
     ret = write_device(path, gpio_uart_rx);
     if (ret)
     {
-        //goto uart_exit;
+        // goto uart_exit;
     }
 
 uart_exit:
@@ -1287,7 +1278,7 @@ void* debug_card_handler(void* threadid)
     std::cout << "debug_card_handler! Thread ID, " << tid << std::endl;
 
     while (1)
-    
+
     {
 
         ret = pal_get_hand_sw_physically(&pos);
@@ -1391,20 +1382,20 @@ debug_card_prs:
         ret = post_enable(pos);
         if (ret)
         {
-            //goto debug_card_done;
+            // goto debug_card_done;
         }
 
         // Get last post code and display it
         ret = post_get_last(pos, &lpc);
         if (ret)
         {
-            //goto debug_card_done;
+            // goto debug_card_done;
         }
 
         ret = post_handle(pos, lpc);
         if (ret)
         {
-            //goto debug_card_out;
+            // goto debug_card_out;
         }
 
     debug_card_done:
@@ -1431,7 +1422,8 @@ int main(int argc, char* argv[])
 
     if (rc)
     {
-        std::cout << "Error:unable to create Postcode thread," << rc << std::endl;
+        std::cout << "Error:unable to create Postcode thread," << rc
+                  << std::endl;
         exit(-1);
     }
 
@@ -1442,58 +1434,53 @@ int main(int argc, char* argv[])
     fb_ipmi::conn->request_name("xyz.openbmc_project.Misc.Ipmi");
 
 #if 0
-    fb_ipmi::sendMeCmd();
 
-    // Request POWER_BUTTON GPIO events
-    if (!fb_ipmi::requestGPIOEvents(
-            "MULTI_HOST_POWER_BUTTON", fb_ipmi::powerButtonHandler,
-            fb_ipmi::powerButtonLine, fb_ipmi::powerButtonEvent))
-    {
-        return -1;
-    }
+  // Request POWER_BUTTON GPIO events
+  if (!fb_ipmi::requestGPIOEvents(
+          "MULTI_HOST_POWER_BUTTON", fb_ipmi::powerButtonHandler,
+          fb_ipmi::powerButtonLine, fb_ipmi::powerButtonEvent)) {
+    return -1;
+  }
 
-    // Request RESET_BUTTON GPIO events
-    if (!fb_ipmi::requestGPIOEvents(
-            "MULTI_HOST_RESET_BUTTON", fb_ipmi::resetButtonHandler,
-            fb_ipmi::resetButtonLine, fb_ipmi::resetButtonEvent))
-    {
-        return -1;
-    }
+  // Request RESET_BUTTON GPIO events
+  if (!fb_ipmi::requestGPIOEvents(
+          "MULTI_HOST_RESET_BUTTON", fb_ipmi::resetButtonHandler,
+          fb_ipmi::resetButtonLine, fb_ipmi::resetButtonEvent)) {
+    return -1;
+  }
 
-    // Request HAND_SW1 GPIO events
-    if (!fb_ipmi::requestGPIOEvents("HAND_SW1", fb_ipmi::HandSwitch1Handler,
-                                    fb_ipmi::HandSwitch1Line,
-                                    fb_ipmi::HandSwitch1Event))
-    {
-        return -1;
-    }
+  // Request HAND_SW1 GPIO events
+  if (!fb_ipmi::requestGPIOEvents("HAND_SW1", fb_ipmi::HandSwitch1Handler,
+                                  fb_ipmi::HandSwitch1Line,
+                                  fb_ipmi::HandSwitch1Event)) {
+    return -1, true;
+  }
 
-    // Request HAND_SW1 GPIO events
-    if (!fb_ipmi::requestGPIOEvents("HAND_SW2", fb_ipmi::HandSwitch2Handler,
-                                    fb_ipmi::HandSwitch2Line,
-                                    fb_ipmi::HandSwitch2Event))
-    {
-        return -1;
-    }
+  // Request HAND_SW1 GPIO events
+  if (!fb_ipmi::requestGPIOEvents("HAND_SW2", fb_ipmi::HandSwitch2Handler,
+                                  fb_ipmi::HandSwitch2Line,
+                                  fb_ipmi::HandSwitch2Event)) {
+    return -1;
+  }
 
-    // Request HAND_SW1 GPIO events
-    if (!fb_ipmi::requestGPIOEvents("HAND_SW3", fb_ipmi::HandSwitch3Handler,
-                                    fb_ipmi::HandSwitch3Line,
-                                    fb_ipmi::HandSwitch3Event))
-    {
-        return -1;
-    }
+  // Request HAND_SW1 GPIO events
+  if (!fb_ipmi::requestGPIOEvents("HAND_SW3", fb_ipmi::HandSwitch3Handler,
+                                  fb_ipmi::HandSwitch3Line,
+                                  fb_ipmi::HandSwitch3Event)) {
+    return -1;
+  }
 
-    // Request HAND_SW1 GPIO events
-    if (!fb_ipmi::requestGPIOEvents("HAND_SW4", fb_ipmi::HandSwitch4Handler,
-                                    fb_ipmi::HandSwitch4Line,
-                                    fb_ipmi::HandSwitch4Event))
-    {
-        return -1;
-    }
+  // Request HAND_SW1 GPIO events
+  if (!fb_ipmi::requestGPIOEvents("HAND_SW4", fb_ipmi::HandSwitch4Handler,
+                                  fb_ipmi::HandSwitch4Line,
+                                  fb_ipmi::HandSwitch4Event)) {
+    return -1;
+  }
 
 #endif
+    fb_ipmi::BICInit();
 
+    std::cerr << "After function powerGoodHandler \n";
     // Power Control Service
     sdbusplus::asio::object_server miscServer =
         sdbusplus::asio::object_server(fb_ipmi::conn);
@@ -1509,20 +1496,15 @@ int main(int argc, char* argv[])
         "ResetButtonPressed", int(0),
         sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
-        "HAND_SW1", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+        "Power_Good1", int(0), sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
-        "HAND_SW2", int(0), sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "HAND_SW3", int(0), sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "HAND_SW4", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+        "Power_Good2", int(0), sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
         "Position", int(0), sdbusplus::asio::PropertyPermission::readWrite);
 
     fb_ipmi::miscIface->initialize();
 
     fb_ipmi::io.run();
-
 
     return 0;
 }
