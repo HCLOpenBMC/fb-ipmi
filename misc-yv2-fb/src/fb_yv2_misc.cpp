@@ -39,6 +39,8 @@ static boost::asio::io_service io;
 std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscIface;
 
+static std::shared_ptr<sdbusplus::asio::dbus_interface> miscPface;
+
 using respType =
     std::tuple<int, uint8_t, uint8_t, uint8_t, uint8_t, std::vector<uint8_t>>;
 static constexpr uint8_t lun = 0;
@@ -333,6 +335,8 @@ static void BICInit()
     }
 }
 }; // namespace fb_ipmi
+
+
 
 #define GPIO_VAL "/sys/class/gpio/gpio%d/value"
 #define GPIO_BASE_NUM 280
@@ -1414,9 +1418,11 @@ debug_card_prs:
     pthread_exit(NULL);
 }
 
+
 int main(int argc, char* argv[])
 {
-    int rc;
+
+ int rc;
     pthread_t handlePostcode;
     rc = pthread_create(&handlePostcode, NULL, debug_card_handler, NULL);
 
@@ -1427,13 +1433,12 @@ int main(int argc, char* argv[])
         exit(-1);
     }
 
-    std::cerr << "Facebook Misc Ipmi service ....\n";
-
-    fb_ipmi::conn = std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
-
-    fb_ipmi::conn->request_name("xyz.openbmc_project.Misc.Ipmi");
-
 #if 0
+  std::cerr << "Facebook Misc Ipmi service ....\n";
+
+  fb_ipmi::conn = std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
+
+  fb_ipmi::conn->request_name("xyz.openbmc_project.Misc.Ipmi");
 
   // Request POWER_BUTTON GPIO events
   if (!fb_ipmi::requestGPIOEvents(
@@ -1477,34 +1482,62 @@ int main(int argc, char* argv[])
     return -1;
   }
 
-#endif
-    fb_ipmi::BICInit();
+  fb_ipmi::BICInit();
 
-    std::cerr << "After function powerGoodHandler \n";
-    // Power Control Service
-    sdbusplus::asio::object_server miscServer =
+  std::cerr << "After function powerGoodHandler \n";
+  // Power Control Service
+  sdbusplus::asio::object_server miscServer =
+      sdbusplus::asio::object_server(fb_ipmi::conn);
+
+  // Power Control Interface
+  fb_ipmi::miscIface = miscServer.add_interface(
+      "/xyz/openbmc_project/misc/ipmi", "xyz.openbmc_project.Misc.Ipmi");
+
+  fb_ipmi::miscIface->register_property(
+      "PowerButtonPressed", int(0),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "ResetButtonPressed", int(0),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "Power_Good1", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "Power_Good2", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "Position", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+
+  fb_ipmi::miscIface->initialize();
+
+#endif
+    std::cerr << "Facebook Misc Ipmi service ....\n";
+
+    fb_ipmi::conn = std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
+
+    fb_ipmi::conn->request_name("xyz.openbmc_project.State.Boot.Raw");
+
+    sdbusplus::asio::object_server postServer =
         sdbusplus::asio::object_server(fb_ipmi::conn);
 
     // Power Control Interface
-    fb_ipmi::miscIface = miscServer.add_interface(
-        "/xyz/openbmc_project/misc/ipmi", "xyz.openbmc_project.Misc.Ipmi");
+    fb_ipmi::miscPface =
+        postServer.add_interface("/xyz/openbmc_project/state/boot/raw",
+                                 "xyz.openbmc_project.State.Boot.Raw");
 
-    fb_ipmi::miscIface->register_property(
-        "PowerButtonPressed", int(0),
-        sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "ResetButtonPressed", int(0),
-        sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "Power_Good1", int(0), sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "Power_Good2", int(0), sdbusplus::asio::PropertyPermission::readWrite);
-    fb_ipmi::miscIface->register_property(
-        "Position", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+    fb_ipmi::miscPface->register_property(
+        "Value", int(0), sdbusplus::asio::PropertyPermission::readWrite);
 
-    fb_ipmi::miscIface->initialize();
+    fb_ipmi::miscPface->initialize();
 
     fb_ipmi::io.run();
+
+    while (1)
+    {
+
+        fb_ipmi::miscPface->set_property("Value", 0x00);
+        sleep(10);
+        fb_ipmi::miscPface->set_property("Value", 0xFF);
+        sleep(10);
+    }
 
     return 0;
 }
