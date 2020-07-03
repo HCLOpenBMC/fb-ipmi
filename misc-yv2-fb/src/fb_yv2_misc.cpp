@@ -40,6 +40,9 @@ std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscIface;
 
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscPface;
+static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP1face;
+static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP2face;
+static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP3face;
 
 using respType =
     std::tuple<int, uint8_t, uint8_t, uint8_t, uint8_t, std::vector<uint8_t>>;
@@ -1528,16 +1531,63 @@ int main(int argc, char* argv[])
 
     fb_ipmi::miscPface->initialize();
 
-    fb_ipmi::io.run();
+    
+   // Host1 Interfac
+  fb_ipmi::miscP1face = postServer.add_interface(
+      "/xyz/openbmc_project/state/boot/raw", "xyz.openbmc_project.State.Boot.Raw1");
 
-    while (1)
-    {
+  fb_ipmi::miscP1face->register_property(
+      "Value2", int(0),
+      sdbusplus::asio::PropertyPermission::readWrite);
 
-        fb_ipmi::miscPface->set_property("Value", 0x00);
-        sleep(10);
-        fb_ipmi::miscPface->set_property("Value", 0xFF);
-        sleep(10);
-    }
+  fb_ipmi::miscP1face->initialize();
+
+  
+   // Host2 postcode Interface
+  fb_ipmi::miscP2face = postServer.add_interface(
+      "/xyz/openbmc_project/state/boot/raw", "xyz.openbmc_project.State.Boot.Raw2");
+
+  fb_ipmi::miscP2face->register_property(
+      "Value3", int(0),
+      sdbusplus::asio::PropertyPermission::readWrite);
+
+  fb_ipmi::miscP2face->initialize();
+
+   // Host3 postcode Interface
+  fb_ipmi::miscP3face = postServer.add_interface(
+      "/xyz/openbmc_project/state/boot/raw", "xyz.openbmc_project.State.Boot.Raw3");
+
+  fb_ipmi::miscP3face->register_property(
+      "Value3", int(0),
+      sdbusplus::asio::PropertyPermission::readWrite);
+
+  fb_ipmi::miscP3face->initialize();
+
+  fb_ipmi::io.run();
+
+  while(1)
+  {
+
+  fb_ipmi::miscPface->set_property("Value", 0x00 );
+  sleep(3);
+  fb_ipmi::miscPface->set_property("Value", 0xFF );
+  sleep(3);
+  fb_ipmi::miscPface->set_property("Value1", 0x00 );
+  sleep(3);
+  fb_ipmi::miscPface->set_property("Value1", 0xFF );
+  sleep(3);
+  fb_ipmi::miscPface->set_property("Value2", 0x00 );
+  sleep(3);
+  fb_ipmi::miscPface->set_property("Value2", 0xFF );
+  sleep(3);
+  fb_ipmi::miscPface->set_property("Value3", 0x00 );
+  sleep(3);
+  fb_ipmi::miscPface->set_property("Value3", 0xFF );
+  sleep(3);
+
+  }
+
+  
 
     return 0;
 }
