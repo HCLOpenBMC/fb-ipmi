@@ -265,26 +265,52 @@ static void setGpioConfiguration(uint8_t host) {
   int netFn = 0x38;
   int cmd = 0x6;
   std::vector<uint8_t> cmdData{
-      0x15, 0xa0, 0x0, 0x03, 0x0, 0x0, 0x0, 0x0, 0x09,
+      0x15, 0xa0, 0x0, 0x03, 0x0, 0x0, 0x0, 0x0, 0x0, 0x12, 0x12
   };
   std::vector<uint8_t> respData;
 
   sendIPMBRequest(host, netFn, cmd, cmdData, respData);
-  int GpiosStatus = respData[0];
-  std::cerr << "setGpioConfiguration Response: " << GpiosStatus << "\n"
-            << std::flush;
+
+    std::cerr << "SetGpioConfiguration Response:\n" << std::flush;
+    for(int i=0; i<respData.size(); i++)
+    {
+        printf("%x:", respData[i]);
+    }
+    std::cout.flush();  
 }
+
+static void getGpioConfiguration(uint8_t host) {
+  int netFn = 0x38;
+  int cmd = 0x5;
+  std::vector<uint8_t> cmdData{
+      0x15, 0xa0, 0x0, 0x03, 0x0, 0x0, 0x0, 0x0,
+  };
+  std::vector<uint8_t> respData;
+
+  sendIPMBRequest(host, netFn, cmd, cmdData, respData);
+    std::cerr << "GetGpioConfiguration Response:\n" << std::flush;
+    for(int i=0; i<respData.size(); i++)
+    {
+        printf("%x:", respData[i]);
+    }
+    std::cout.flush();
+}
+
 
 static void BICInit() {
   int MAX_HOST = 2;
   for (int host = 0; host < MAX_HOST; host++) {
+    std::cerr<<" Get Gpio Config for the host " <<  host << "\n"<<std::flush;
+    getGpioConfiguration(host);
     setGpioConfiguration(host);
+    std::cerr<<"Aftere set Gpio Config\n"<<std::flush;
+    getGpioConfiguration(host);
   }
 }
 }; // namespace fb_ipmi
 
 int main(int argc, char *argv[]) {
-  std::cerr << "Facebook Misc Ipmi service ....\n";
+  std::cerr << "Facebook Misc Ipmi service ...\n";
 
   fb_ipmi::conn = std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
 
