@@ -307,12 +307,6 @@ static void BICInit() {
     getGpioConfiguration(host);
   }
 }
-
-static void updatePGood(int val)
-{
-   miscIface->set_property("Power_Good1", val);
-}
-
 }; // namespace fb_ipmi
 
 int main(int argc, char *argv[]) {
@@ -364,7 +358,7 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-//  fb_ipmi::BICInit();
+  fb_ipmi::BICInit();
 
   std::cerr << "After function powerGoodHandler \n";
   // Power Control Service
@@ -387,7 +381,6 @@ int main(int argc, char *argv[]) {
       "Power_Good2", int(0), sdbusplus::asio::PropertyPermission::readWrite);
   fb_ipmi::miscIface->register_property(
       "Position", int(0), sdbusplus::asio::PropertyPermission::readWrite);
-   fb_ipmi::miscIface->register_method("updatePGood1",fb_ipmi::updatePGood);
 
   fb_ipmi::miscIface->initialize();
 
@@ -395,4 +388,3 @@ int main(int argc, char *argv[]) {
 
   return 0;
 }
-
