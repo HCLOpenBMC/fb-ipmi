@@ -295,6 +295,297 @@ static void getGpioConfiguration(uint8_t host) {
     }
     std::cout.flush();
 }
+#define CMD_OEM_1S_GET_CONFIG 0x0E
+#define CMD_OEM_1S_SET_CONFIG 0x10
+#define NETFN_OEM_1S_REQ 0x38
+#define CMD_OEM_1S_GET_POST_BUF 0x08
+
+#define GPIO_VAL "/sys/class/gpio/gpio%d/value"
+#define GPIO_BASE_NUM 280
+#define GPIO_POSTCODE_0 (48 + GPIO_BASE_NUM)
+#define GPIO_POSTCODE_1 (49 + GPIO_BASE_NUM)
+#define GPIO_POSTCODE_2 (50 + GPIO_BASE_NUM)
+#define GPIO_POSTCODE_3 (51 + GPIO_BASE_NUM)
+#define GPIO_POSTCODE_4 (124 + GPIO_BASE_NUM)
+#define GPIO_POSTCODE_5 (125 + GPIO_BASE_NUM)
+#define GPIO_POSTCODE_6 (126 + GPIO_BASE_NUM)
+#define GPIO_POSTCODE_7 (127 + GPIO_BASE_NUM)
+
+#define BIT(value, index) ((value >> index) & 1)
+
+static std::shared_ptr<sdbusplus::asio::dbus_interface> miscPface;
+static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP1face;
+static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP2face;
+
+
+static constexpr bool DEBUG = false;
+
+
+
+typedef struct _bic_config_t {
+  union {
+    struct {
+      uint8_t sol : 1;
+      uint8_t post : 1;
+      uint8_t rsvd : 6;
+    };
+    uint8_t config;
+  };
+} bic_config_t;
+
+
+static int write_device(const char *device, const char *value) {
+  FILE *fp;
+  int rc;
+
+  if (DEBUG)
+  std::cout << "write_device()" << std::endl;
+
+  fp = fopen(device, "w");
+  if (!fp) {
+    int err = errno;
+
+    std::cout << "failed to open device for write :" << device << std::endl;
+
+    return err;
+  }
+
+  rc = fputs(value, fp);
+  fclose(fp);
+
+  if (rc < 0) {
+
+    std::cout << "failed to write device" << device << std::endl;
+
+    return ENOENT;
+  } else {
+    return 0;
+  }
+}
+
+// Get BIC Configuration
+static int bic_get_config(uint8_t host, bic_config_t *cfg) {
+
+  int ret;
+  std::vector<uint8_t> cmdData{0x15, 0xA0, 0x0, 0x03,
+                               0x0,  0x0,  0x0, 0x0}; // IANA ID
+  std::vector<uint8_t> respData;
+  uint8_t rlen = 0;
+
+  sendIPMBRequest(host, NETFN_OEM_1S_REQ, CMD_OEM_1S_GET_CONFIG, cmdData,
+                  respData);
+  if (DEBUG) {
+   std::cout << "bic_get_config  : host " << (int)host << std::endl;
+
+  std::cerr << "bic_get_config Response:\n" << std::flush;
+  for (int i = 0; i < respData.size(); i++) {
+    printf("0x%x :", respData[i]);
+  }
+
+  printf("\n");
+
+  }
+   uint8_t *temp = respData.data();
+
+  *(uint8_t *)cfg = temp[3];
+
+  std::cout.flush();
+
+  return ret;
+}
+
+// Set BIC Configuration
+static int bic_set_config(uint8_t host, bic_config_t *cfg) {
+  int ret;
+  std::vector<uint8_t> cmdData{0x15, 0xA0, 0x0, 0x04,
+                               0x0,  0x0,  0x0, 0x0}; // IANA ID
+  std::vector<uint8_t> respData;
+  uint8_t rlen = 0;
+
+   if (DEBUG)
+    std::cout << "bic_set_config for host:" << (int)host << std::endl;
+
+  sendIPMBRequest(host, NETFN_OEM_1S_REQ, CMD_OEM_1S_SET_CONFIG, cmdData,
+                  respData);
+
+   std::cerr << "bic_get_config Response:\n" << std::flush;
+  for (int i = 0; i < respData.size(); i++) {
+    printf("0x%x :", respData[i]);
+  }
+  std::cout.flush();
+
+  return ret;
+}
+
+// Enable POST buffer for the server in given slot
+static int post_enable(uint8_t host) {
+  int ret;
+  bic_config_t config = {0};
+
+
+  ret = bic_get_config(host, &config);
+  if (ret) {
+
+    std::cout << "post_enable: bic_get_config failed for host :" << host
+              << std::endl;
+
+    return ret;
+  }
+
+  if (0 == config.post) \
+{
+
+    config.post = 1;
+    ret = bic_set_config(host, &config);
+    if (ret) {
+
+      std::cout << "post_enable: bic_set_config failed in host:" << host
+                << std::endl;
+
+      return ret;
+    }
+  }
+}
+
+
+// Display the given POST code using GPIO port
+static int post_display(uint8_t status) {
+  char path[64] = {0};
+  int ret;
+  char *val;
+
+  //std::cout << "post_display: status is" << std::hex < status << std::endl;
+
+  if (DEBUG)
+  printf("Postcode : 0%x", status);
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_0);
+
+  if (BIT(status, 0)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_1);
+  if (BIT(status, 1)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_2);
+  if (BIT(status, 2)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_3);
+  if (BIT(status, 3)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_4);
+  if (BIT(status, 4)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_5);
+  if (BIT(status, 5)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_6);
+  if (BIT(status, 6)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+  sprintf(path, GPIO_VAL, GPIO_POSTCODE_7);
+  if (BIT(status, 7)) {
+    val = "1";
+  } else {
+    val = "0";
+  }
+
+  ret = write_device(path, val);
+  if (ret) {
+    goto post_exit;
+  }
+
+post_exit:
+  if (ret) {
+    std::cout << "write_device failed for" << path << std::endl;
+    return -1;
+  } else {
+    return 0;
+  }
+}
+
+
+static void readPostcode(uint8_t postcode) {
+int ret;
+uint8_t host = 1;  // Set Host0 always TODO : Need to apply Kumar IPMI patch.
+
+std::cout << "postcode_new:" << (int)postcode << "host:" <<(int)host << std::endl;
+
+ switch (host) {
+  case 1:
+    fb_ipmi::miscPface->set_property("Value", val);
+    fb_ipmi::miscP1face->set_property("Value", val);
+    break;
+  case 2:
+    fb_ipmi::miscP2face->set_property("Value", val);
+    break;
+  }
+  ret = post_display(postcode);
+  if (ret) {
+   std::cout << "GPIO write error" << std::endl;
+  }
+}
 
 
 static void BICInit() {
@@ -305,6 +596,8 @@ static void BICInit() {
     setGpioConfiguration(host);
     std::cerr<<"Aftere set Gpio Config\n"<<std::flush;
     getGpioConfiguration(host);
+    // Enable postcode in Bridge IC through IPMI Interface
+    post_enable(host);
   }
 }
 }; // namespace fb_ipmi
@@ -382,8 +675,33 @@ int main(int argc, char *argv[]) {
   fb_ipmi::miscIface->register_property(
       "Position", int(0), sdbusplus::asio::PropertyPermission::readWrite);
 
+
   fb_ipmi::miscIface->initialize();
 
+  fb_ipmi::conn->request_name("xyz.openbmc_project.State.Boot.Raw");
+  fb_ipmi::conn->request_name("xyz.openbmc_project.State.Host0.Boot.Raw");
+  fb_ipmi::conn->request_name("xyz.openbmc_project.State.Host1.Boot.Raw");
+
+
+  // Host1 postcode Interfac
+  fb_ipmi::miscP1face =
+      postServer.add_interface("/xyz/openbmc_project/state/host0/boot/raw",
+                               "xyz.openbmc_project.State.Host0.Boot.Raw");
+
+  fb_ipmi::miscP1face->register_property(
+      "Value", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+
+  fb_ipmi::miscP1face->initialize();
+
+  // Host2 postcode Interface
+  fb_ipmi::miscP2face =
+      postServer.add_interface("/xyz/openbmc_project/state/host1/boot/raw",
+                               "xyz.openbmc_project.State.Host1.Boot.Raw");
+
+  fb_ipmi::miscP2face->register_property(
+      "Value", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+
+  fb_ipmi::miscP2face->initialize();
   fb_ipmi::io.run();
 
   return 0;
