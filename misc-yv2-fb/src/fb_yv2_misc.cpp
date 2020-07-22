@@ -313,6 +313,8 @@ static void getGpioConfiguration(uint8_t host) {
 
 #define BIT(value, index) ((value >> index) & 1)
 
+#define GPIO_DBG_CARD_PRSNT (139 + GPIO_BASE_NUM)
+
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscPface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP1face;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP2face;
@@ -565,6 +567,74 @@ post_exit:
   }
 }
 
+
+// Helper Functions
+static int read_device(const char *device, int *value) {
+  FILE *fp;
+  int rc;
+
+  if (DEBUG)
+  std::cout << "read_device()" << std::endl;
+
+  fp = fopen(device, "r");
+  if (!fp) {
+    int err = errno;
+    std::cout << "failed to open device" << device << std::endl;
+    return err;
+  }
+
+  rc = fscanf(fp, "%d", value);
+  fclose(fp);
+  if (rc != 1) {
+    std::cout << "failed to read device" << device << std::endl;
+    return ENOENT;
+  } else {
+    return 0;
+  }
+}
+
+static uint8_t is_bic_ready(uint8_t host) {
+  int val;
+  char path[64] = {0};
+
+  std::cout << "is_bic_ready in host" << host << std::endl;
+
+  if (host < 1 || host > 4) {
+    return 0;
+  }
+
+  sprintf(path, GPIO_VAL, gpio_bic_ready[host]);
+  if (read_device(path, &val)) {
+    return 0;
+  }
+
+  if (val == 0x0) {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+int is_debug_card_prsnt(uint8_t *status) {
+  int val;
+  char path[64] = {0};
+
+   if (DEBUG)
+    std::cout << "is_debug_card_prsnt()" << std::endl;
+
+  sprintf(path, GPIO_VAL, GPIO_DBG_CARD_PRSNT);
+
+  if (read_device(path, &val)) {
+    return -1;
+  }
+
+  if (val == 0x0) {
+    *status = 1;
+  } else {
+    *status = 0;
+  }
+
+  return 0;
+}
 
 static void readPostcode(uint8_t postcode) {
 int ret;
