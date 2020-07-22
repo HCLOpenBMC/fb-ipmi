@@ -328,8 +328,8 @@ static void  powerGoodHandler()
     boost::asio::steady_timer timer{fb_ipmi::io, std::chrono::milliseconds{200}};
     timer.async_wait([](const boost::system::error_code &ec)
     {
-        miscIface->set_property("POWER_GOOD1", getPowerGoodStatus(0));
-        miscIface->set_property("POWER_GOOD2", getPowerGoodStatus(1));
+        miscIface->set_property("Power_Good1", getPowerGoodStatus(0));
+        miscIface->set_property("Power_Good2", getPowerGoodStatus(1));
     });
     powerGoodHandler();
 }
@@ -394,7 +394,7 @@ int main(int argc, char* argv[])
     }	
 
     //Call Power Good Handler
-    fb_ipmi::powerGoodHandler();
+    //fb_ipmi::powerGoodHandler();
 
     std::cerr<<"After function powerGoodHandler \n";
 	// Power Control Service
