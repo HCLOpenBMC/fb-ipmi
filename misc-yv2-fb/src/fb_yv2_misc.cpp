@@ -325,7 +325,7 @@ static int getPowerGoodStatus(uint8_t host)
 static void  powerGoodHandler()
 {
     //std::cerr<<"Check power good handler\n";
-    boost::asio::steady_timer timer{fb_ipmi::io, std::chrono::seconds{1}};
+    boost::asio::steady_timer timer{fb_ipmi::io, std::chrono::milliseconds{200}};
     timer.async_wait([](const boost::system::error_code &ec)
     {
         miscIface->set_property("POWER_GOOD1", getPowerGoodStatus(0));
