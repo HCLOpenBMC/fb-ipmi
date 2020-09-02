@@ -414,6 +414,14 @@ int main(int argc, char* argv[])
     fb_ipmi::miscIface->register_property(
         "Power_Good2", int(0),sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
+        "Hand_SW1", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+    fb_ipmi::miscIface->register_property(
+        "Hand_SW2", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+    fb_ipmi::miscIface->register_property(
+        "Hand_SW3", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+    fb_ipmi::miscIface->register_property(
+        "Hand_SW4", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+    fb_ipmi::miscIface->register_property(
         "Position", int(0),sdbusplus::asio::PropertyPermission::readWrite);
 
     fb_ipmi::miscIface->initialize();
