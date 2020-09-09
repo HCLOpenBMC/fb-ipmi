@@ -233,12 +233,12 @@ static void powerButtonHandler()
 	{
 		std::cerr << "power button pressed = 1 \n"; 
 		updateHandSwitchPosition();
-		miscIface->set_property("PowerButtonPressed", 1);
+		miscIface->set_property("PowerButton_Host1", false);
 	}
 	else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
 	{
 		std::cerr << "power button pressed = 0 \n"; 
-		miscIface->set_property("PowerButtonPressed", 0);
+		miscIface->set_property("PowerButton_Host1", true);
 	}
 	powerButtonEvent.async_wait(
 		boost::asio::posix::stream_descriptor::wait_read,
@@ -262,12 +262,12 @@ static void resetButtonHandler()
     {
 		std::cerr << "Reset button pressed = 1 \n"; 
 		updateHandSwitchPosition();
-        miscIface->set_property("ResetButtonPressed", 1);
+        miscIface->set_property("ResetButton_Host1", false);
     }
     else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
 		std::cerr << "Reset button pressed = 0 \n"; 
-        miscIface->set_property("ResetButtonPressed", 0);
+        miscIface->set_property("ResetButton_Host1", true);
     }
     resetButtonEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
@@ -309,7 +309,7 @@ int sendIPMBRequest(uint8_t host, uint8_t netFn, uint8_t cmd, std::vector<uint8_
     return 0;
 }
 
-static int getPowerGoodStatus(uint8_t host)
+static bool getPowerGoodStatus(uint8_t host)
 {
     int netFn = 0x38;
     int cmd = 3;
@@ -318,19 +318,17 @@ static int getPowerGoodStatus(uint8_t host)
 
     sendIPMBRequest(host, netFn, cmd, cmdData, respData);
     uint8_t GpiosStatus = respData[3];
-    int pwrGdStatusFromIPMI = (GpiosStatus & CPUPwrGdMask) && (GpiosStatus & PCHPwrGdMask);
+    bool pwrGdStatusFromIPMI = (GpiosStatus & CPUPwrGdMask) && (GpiosStatus & PCHPwrGdMask);
     return pwrGdStatusFromIPMI;
 }
 
 static void  powerGoodHandler()
 {
-    //std::cerr<<"Check power good handler\n";
+    std::cerr<<"Check power good handler\n";
     boost::asio::steady_timer timer{fb_ipmi::io, std::chrono::milliseconds{200}};
-    timer.async_wait([](const boost::system::error_code &ec)
-    {
-        miscIface->set_property("Power_Good1", getPowerGoodStatus(0));
-        miscIface->set_property("Power_Good2", getPowerGoodStatus(1));
-    });
+    timer.wait();
+    miscIface->set_property("Power_Good_Host1", getPowerGoodStatus(0));
+    miscIface->set_property("Power_Good_Host2", getPowerGoodStatus(1));
     powerGoodHandler();
 }
 
@@ -343,7 +341,7 @@ int main(int argc, char* argv[])
 	fb_ipmi::conn =
         std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
 	
-	fb_ipmi::conn->request_name("xyz.openbmc_project.Misc.Ipmi");
+	fb_ipmi::conn->request_name("xyz.openbmc_project.Chassis.Event");
 
 	// Request POWER_BUTTON GPIO events
     if (!fb_ipmi::requestGPIOEvents(
@@ -394,7 +392,7 @@ int main(int argc, char* argv[])
     }	
 
     //Call Power Good Handler
-    //fb_ipmi::powerGoodHandler();
+    fb_ipmi::powerGoodHandler();
 
     std::cerr<<"After function powerGoodHandler \n";
 	// Power Control Service
@@ -403,16 +401,16 @@ int main(int argc, char* argv[])
 
     // Power Control Interface
     fb_ipmi::miscIface = miscServer.add_interface(
-        "/xyz/openbmc_project/misc/ipmi", "xyz.openbmc_project.Misc.Ipmi");
+        "/xyz/openbmc_project/Chassis/Event", "xyz.openbmc_project.Chassis.Event");
 
-	fb_ipmi::miscIface->register_property("PowerButtonPressed",
-                                          int(0),sdbusplus::asio::PropertyPermission::readWrite);
-	fb_ipmi::miscIface->register_property("ResetButtonPressed",
-                                          int(0),sdbusplus::asio::PropertyPermission::readWrite);
+	fb_ipmi::miscIface->register_property("PowerButton_Host1",
+                                          bool(true),sdbusplus::asio::PropertyPermission::readWrite);
+	fb_ipmi::miscIface->register_property("ResetButton_Host1",
+                                          bool(true),sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
-        "Power_Good1", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+        "Power_Good_Host1", bool(false),sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
-        "Power_Good2", int(0),sdbusplus::asio::PropertyPermission::readWrite);
+        "Power_Good_Host2", bool(false),sdbusplus::asio::PropertyPermission::readWrite);
     fb_ipmi::miscIface->register_property(
         "Position", int(0),sdbusplus::asio::PropertyPermission::readWrite);
 
