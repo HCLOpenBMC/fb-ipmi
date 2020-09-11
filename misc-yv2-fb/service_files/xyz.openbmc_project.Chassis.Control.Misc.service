@@ -8,7 +8,7 @@ Restart=always
 RestartSec=3
 ExecStart=/usr/bin/fb-yv2-misc
 Type=dbus
-BusName=xyz.openbmc_project.Misc.Ipmi
+BusName=xyz.openbmc_project.Chassis.Event
 
 [Install]
 WantedBy=sysinit.target
