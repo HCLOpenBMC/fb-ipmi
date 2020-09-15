@@ -303,8 +303,8 @@ inline static sdbusplus::bus::match::match powerOkEventMonitor() {
     }
     while (value ==
            "xyz.openbmc_project.State.Chassis.PowerState.PowerGoodWait") {
-      miscIface->set_property("Power_Good_Host1", getPowerGoodStatus(0));
-      miscIface->set_property("Power_Good_Host2", getPowerGoodStatus(1));
+      miscIface->set_property("Power_Good_Host1", getPowerGoodStatus(1));
+      miscIface->set_property("Power_Good_Host2", getPowerGoodStatus(0));
     }
   };
 
