@@ -1,6 +1,6 @@
 [Unit]
 Description=Facebook Misc Ipmi Read
-After=ipmb.service
+Wants=ipmb.service
 
 [Service]
 Restart=always
