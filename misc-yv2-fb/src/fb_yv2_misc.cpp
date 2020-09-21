@@ -43,6 +43,18 @@ static constexpr uint8_t lun = 0;
 static constexpr uint8_t CPUPwrGdMask = 0x01;
 static constexpr uint8_t PCHPwrGdMask = 0x02;
 
+
+int curr = -1;
+int prev = -1;
+int ret;
+uint8_t prsnt = 0;
+uint8_t pos, usb_pos;
+uint8_t prev_pos = 0xff, prev_phy_pos = 0xff;
+uint8_t status;
+char str[8];
+
+void UpdatePositionChange(void);
+
 // GPIO Lines and Event Descriptors
 static gpiod::line powerButtonLine;
 static boost::asio::posix::stream_descriptor powerButtonEvent(io);
@@ -56,6 +68,12 @@ static gpiod::line HandSwitch3Line;
 static boost::asio::posix::stream_descriptor HandSwitch3Event(io);
 static gpiod::line HandSwitch4Line;
 static boost::asio::posix::stream_descriptor HandSwitch4Event(io);
+
+static gpiod::line debugCardPresentLine;
+static boost::asio::posix::stream_descriptor debugCardPresentEvent(io);
+
+static gpiod::line uartSelectLine;
+static boost::asio::posix::stream_descriptor uartSelectEvent(io);
 
 static bool
 requestGPIOEvents(const std::string &name, const std::function<void()> &handler,
@@ -229,6 +247,58 @@ static void powerButtonHandler() {
                               });
 }
 
+static void debugCardPresentHandler() {
+  gpiod::line_event gpioLineEvent = debugCardPresentLine.event_read();
+
+  if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE) 
+  {
+    std::cerr << "DebugCardPresent button pressed = 1 \n";
+    //updateHandSwitchPosition();
+    prsnt = true;
+    miscIface->set_property("DebugCardPresent", false);
+  } 
+  else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE) 
+  {
+    std::cerr << "DebugCardPresent button pressed = 0 \n";
+    miscIface->set_property("DebugCardPresent", true);
+  }
+  debugCardPresentEvent.async_wait(boost::asio::posix::stream_descriptor::wait_read,
+                              [](const boost::system::error_code ec) {
+                                if (ec) {
+                                  std::cerr << "DebugCardPresent button handler error: "
+                                            << ec.message() << "\n";
+                                  return;
+                                }
+                                debugCardPresentHandler();
+                              });
+}
+
+static void uartSelectHandler() {
+  gpiod::line_event gpioLineEvent = uartSelectLine.event_read();
+
+  if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE) 
+  {
+    std::cerr << "uartSelect button pressed = 1 \n";
+    UpdatePositionChange();
+    miscIface->set_property("UARTSelect", false);
+  } else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE) 
+  {
+    std::cerr << "uartSelect button pressed = 0 \n";
+    //miscIface->set_property("UARTSelect", true);
+  }
+  debugCardPresentEvent.async_wait(boost::asio::posix::stream_descriptor::wait_read,
+                              [](const boost::system::error_code ec) 
+  {
+                                if (ec) {
+                                  std::cerr << "UARTSelect button handler error: "
+                                            << ec.message() << "\n";
+                                  return;
+                                }
+                                uartSelectHandler();
+                              });
+  }
+
+
 static void resetButtonHandler() {
   gpiod::line_event gpioLineEvent = resetButtonLine.event_read();
 
@@ -335,7 +405,6 @@ inline static sdbusplus::bus::match::match powerOkEventMonitor() {
 #define GPIO_VAL "/sys/class/gpio/gpio%d/value"
 #define GPIO_BASE_NUM 792
 
-#define GPIO_DBG_CARD_PRSNT (139 + GPIO_BASE_NUM)
 
 #define UART1_TXD (1 << 22)
 #define UART2_TXD (1 << 30)
@@ -354,7 +423,6 @@ inline static sdbusplus::bus::match::match powerOkEventMonitor() {
 #define PIN_CTRL2_OFFSET 0x84
 #define AST_SCU_BASE 0x1e6e2000
 
-#define MAX_VALUE_LEN 50 // TODO
 
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscPface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP1face;
@@ -362,7 +430,6 @@ static std::shared_ptr<sdbusplus::asio::dbus_interface> miscP2face;
 
 static constexpr bool DEBUG = false;
 
-static void *m_gpio_hand_sw = NULL;
 static uint8_t m_pos = 0xff;
 
 enum {
@@ -512,26 +579,66 @@ static int control_sol_txd(uint8_t slot, uint8_t dis_tx) {
   return 0;
 }
 
-int is_debug_card_prsnt(uint8_t *status) {
-  int val;
-  char path[64] = {0};
+#define SWITCH_POS_PATH "/etc/swPos.data"
+#define KEY_FRONTPANEL_UART_POS "uart_sel_pos"
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 
-  std::cout << "is_debug_card_prsnt()" << std::endl;
+nlohmann::json appData __attribute__((init_priority(101)));
 
-  sprintf(path, GPIO_VAL, GPIO_DBG_CARD_PRSNT);
+int16_t  getSwPpos(char* pos)
+{
+    /* Get App data stored in json file */
+    std::ifstream file(SWITCH_POS_PATH);
+    if (file)
+    {
+        file >> appData;
+        file.close();
+    }
+    else
+    {
+     std::cout << "Error in read file" << SWITCH_POS_PATH << "\n";
+     std::cout.flush();
+     return -1;
+    }
+    std::string str = appData[KEY_FRONTPANEL_UART_POS].get<std::string>();
+    
 
-  if (read_device(path, &val)) {
-    return -1;
-  }
+    *pos++ = 0; // byte 1: Set selector not supported
+    *pos++ = 0; // byte 2: Only ASCII supported
 
-  if (val == 0x0) {
-    *status = 1;
-  } else {
-    *status = 0;
-  }
+    int len = str.length();
+    *pos++ = len;
+    memcpy(pos, str.data(), len);
 
-  return 0;
+    std::cout << "Read Data : " << pos << "\n";
+    std::cout.flush();
+
+   return 0;
+
 }
+
+int16_t setSwPpos(char* pos)
+{
+    std::stringstream ss;
+  
+    ss << (char)pos[0];
+
+    std::cout << "Write Data : " << ss.str() << "\n";
+    std::cout.flush();
+    appData[KEY_FRONTPANEL_UART_POS] = ss.str();
+
+    std::ofstream file(SWITCH_POS_PATH);
+    file << appData;
+    file.close();
+
+    return 0;
+    
+}
+
+
 
 // Read the Front Panel Hand Switch and return the position
 static int pal_get_hand_sw_physically(uint8_t *pos) {
@@ -541,23 +648,23 @@ static int pal_get_hand_sw_physically(uint8_t *pos) {
 
   *pos = hostPos;
 
-  std::cout << "Exit : pal_get_hand_sw_physically()" << std::endl;
+  std::cout << "Switch Position : " << pos << std::endl;
 
   return 0;
 }
 
 static int pal_get_hand_sw(uint8_t *pos) {
-  char value[MAX_VALUE_LEN] = {0};
+  char value[20];
   uint8_t loc;
   int ret;
 
   std::cout << "pal_get_hand_sw()" << std::endl;
 
-#if 0
-    ret = kv_get("spb_hand_sw", value, NULL, 0); //TODO
+    //ret = kv_get("spb_hand_sw", value, NULL, 0); //TODO
+    getSwPpos(value);
     if (!ret)
     {
-        loc = atoi(value);
+        loc = std::stoi(value);
         if ((loc > HAND_SW_BMC) || (loc < HAND_SW_SERVER1))
         {
             return pal_get_hand_sw_physically(pos);
@@ -567,7 +674,6 @@ static int pal_get_hand_sw(uint8_t *pos) {
         *pos = loc;
         return 0;
     }
-#endif
 
   return pal_get_hand_sw_physically(pos);
 }
@@ -584,11 +690,16 @@ static int pal_switch_uart_mux(uint8_t slot) {
 
   std::cout << "pal_switch_uart_mux()" << std::endl;
 
+#if 0
   ret = is_debug_card_prsnt(&prsnt);
   if (ret) {
     goto uart_exit;
   }
 
+#endif
+
+  if(prsnt)
+{
   // Refer the UART select table in schematic
   switch (slot) {
   case HAND_SW_SERVER1:
@@ -671,6 +782,8 @@ static int pal_switch_uart_mux(uint8_t slot) {
     goto uart_exit;
   }
 
+}
+
 uart_exit:
   if (ret) {
     std::cout << "pal_switch_uart_mux: write_device failed:" << path
@@ -681,24 +794,10 @@ uart_exit:
   }
 }
 
-int curr = -1;
-int prev = -1;
-int ret;
-uint8_t prsnt = 0;
-uint8_t pos, usb_pos;
-uint8_t prev_pos = 0xff, prev_phy_pos = 0xff;
-uint8_t lpc;
-uint8_t status;
-char str[8];
 
-void *debug_card_handler(void *threadid) {
+void debug_card_handler(void) {
 
-  long tid;
-
-  tid = (long)threadid;
   std::cout << "debug_card_handler " << std::endl;
-
-  while (1) {
 
     ret = pal_get_hand_sw_physically(&pos);
     if (ret) {
@@ -716,14 +815,15 @@ void *debug_card_handler(void *threadid) {
     }
 
     prev_phy_pos = pos;
-#if 0
+
         sprintf(str, "%u", pos);
-        ret = kv_set("spb_hand_sw", str, 0, 0);
+        //ret = kv_set("spb_hand_sw", str, 0, 0);
+         ret = setSwPpos(str);
         if (ret)
         {
             goto debug_card_out;
         }
-#endif
+
   get_hand_sw_cache:
     ret = pal_get_hand_sw(&pos);
     if (ret) {
@@ -749,11 +849,13 @@ void *debug_card_handler(void *threadid) {
 
   debug_card_prs:
 
+#if 0
     // Check if debug card present or not
     ret = is_debug_card_prsnt(&prsnt);
     if (ret) {
       goto debug_card_out;
     }
+#endif
     curr = prsnt;
 
     // Check if Debug Card was either inserted or removed
@@ -777,19 +879,37 @@ void *debug_card_handler(void *threadid) {
   debug_card_out:
     if (curr == 1) {
       usleep(500000); // TODO
-    } else
+    } 
+   else
       sleep(1);
-
-    sleep(800);
-  }
-
-  pthread_exit(NULL);
+ 
 }
+
+void UpdatePositionChange(void)
+{
+ uint8_t slot_id;
+ char locstr[10];
+
+    if (pal_get_hand_sw(&slot_id)) {
+      slot_id = HAND_SW_BMC;
+    }
+
+    slot_id = (slot_id >= HAND_SW_BMC) ? HAND_SW_SERVER1 : (slot_id + 1);
+    sprintf(locstr, "%u", slot_id);
+    //kv_set("spb_hand_sw", locstr, 0, 0);
+     setSwPpos(locstr);
+     std::cerr << "change hand_sw location to FRU %s by button" << locstr << "\n";
+     debug_card_handler();
+}
+
+
 
 } // namespace fb_ipmi
 
 int main(int argc, char *argv[]) {
   std::cerr << "Facebook Misc Ipmi service ....\n";
+
+#if 0
 
   fb_ipmi::conn = std::make_shared<sdbusplus::asio::connection>(fb_ipmi::io);
 
@@ -813,7 +933,7 @@ int main(int argc, char *argv[]) {
   if (!fb_ipmi::requestGPIOEvents("HAND_SW1", fb_ipmi::HandSwitch1Handler,
                                   fb_ipmi::HandSwitch1Line,
                                   fb_ipmi::HandSwitch1Event)) {
-    return -1, true;
+    return -1;
   }
 
   // Request HAND_SW1 GPIO events
@@ -837,18 +957,30 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
+  // Request Debug card present GPIO events
+  if (!fb_ipmi::requestGPIOEvents(
+          "GPIO_DBG_CARD_PRSNT", fb_ipmi::debugCardPresentHandler,
+          fb_ipmi::debugCardPresentLine, fb_ipmi::debugCardPresentEvent)) {
+    return -1;
+  }
+
+   // Request UART Selection GPIO events
+  if (!fb_ipmi::requestGPIOEvents(
+          "GPIO_UART_SEL", fb_ipmi::uartSelectHandler,
+          fb_ipmi::uartSelectLine, fb_ipmi::uartSelectEvent)) {
+    return -1;
+  }
+
+#if 1
   std::cerr << "After function powerGoodHandler \n";
   // Power Control Service
   sdbusplus::asio::object_server miscServer =
       sdbusplus::asio::object_server(fb_ipmi::conn);
 
-#if 1
   // Power Control Interface
   fb_ipmi::miscIface =
       miscServer.add_interface("/xyz/openbmc_project/Chassis/Event",
                                "xyz.openbmc_project.Chassis.Event");
-
-#endif
 
   fb_ipmi::miscIface->register_property(
       "PowerButton_Host1", bool(true),
@@ -864,12 +996,36 @@ int main(int argc, char *argv[]) {
       sdbusplus::asio::PropertyPermission::readWrite);
   fb_ipmi::miscIface->register_property(
       "Position", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+
+
+#if 0  
+  fb_ipmi::miscIface->register_property(
+      "AcCycle", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+
+  fb_ipmi::miscIface->register_property(
+      "SledCycle", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+
+  fb_ipmi::miscIface->register_property(
+      "UARTSelect", int(0), sdbusplus::asio::PropertyPermission::readWrite);
+#endif
+
   fb_ipmi::miscIface->initialize();
 
-  sdbusplus::bus::match::match pulseEventMonitor =
-      fb_ipmi::powerOkEventMonitor();
+#endif
+#endif
+ 
+  char writeData[]= "9";
+  char readData[10];
 
-  fb_ipmi::io.run();
+   
 
+  fb_ipmi::setSwPpos(writeData);
+  fb_ipmi::getSwPpos(readData);
+
+  while(1); 
+
+  //fb_ipmi::io.run();
+  
+ 
   return 0;
 }
