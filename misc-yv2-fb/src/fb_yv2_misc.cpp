@@ -385,13 +385,37 @@ int main(int argc, char *argv[]) {
       "PowerButton_Host1", bool(true),
       sdbusplus::asio::PropertyPermission::readWrite);
   fb_ipmi::miscIface->register_property(
+      "PowerButton_Host2", bool(true),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "PowerButton_Host3", bool(true),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "PowerButton_Host4", bool(true),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
       "ResetButton_Host1", bool(true),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "ResetButton_Host2", bool(true),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "ResetButton_Host3", bool(true),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "ResetButton_Host4", bool(true),
       sdbusplus::asio::PropertyPermission::readWrite);
   fb_ipmi::miscIface->register_property(
       "Power_Good_Host1", bool(false),
       sdbusplus::asio::PropertyPermission::readWrite);
   fb_ipmi::miscIface->register_property(
       "Power_Good_Host2", bool(false),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "Power_Good_Host3", bool(false),
+      sdbusplus::asio::PropertyPermission::readWrite);
+  fb_ipmi::miscIface->register_property(
+      "Power_Good_Host4", bool(false),
       sdbusplus::asio::PropertyPermission::readWrite);
   fb_ipmi::miscIface->register_property(
       "Position", int(0), sdbusplus::asio::PropertyPermission::readWrite);
