@@ -20,8 +20,8 @@ target_link_libraries(${PROJECT_NAME} sdbusplus)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
 
 set(
   SERVICE_FILES
