@@ -88,21 +88,23 @@ int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
                std::vector<uint8_t> &sendData, uint32_t offset, uint8_t updateCmd)
 {
 
+	// Vector declaration
     std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
     std::vector<uint8_t> respData;
-    int retries = MAX_RETRY;
-    int ret = 0;
 
-    // Fill the component for which firmware is requested
+	// Variable declaration
+    int ret = 0;
+	uint8_t len_byte[2];
+    uint8_t offset_byte[4];
+    *(uint32_t*)&offset_byte = offset;
+	*(uint32_t*)&len_byte = sendData.size();
+	int retries = MAX_RETRY;
+
+	// Fill the component for which firmware is requested
     cmdData.push_back(updateCmd);
-    cmdData.push_back((offset) & 0xFF); //--> google and find out if there is any way to swap or endian change directly without >>/&
-    cmdData.push_back((offset >> 8) & 0xFF);
-    cmdData.push_back((offset >> 16) & 0xFF);
-    cmdData.push_back((offset >> 24) & 0xFF);
-    cmdData.push_back((sendData.size()) & 0xFF);
-    cmdData.push_back((sendData.size() >> 8) & 0xFF);
-    cmdData.insert(cmdData.end(), std::move_iterator(sendData.begin()),
-                                     std::move_iterator(sendData.end()));
+	cmdData.insert(cmdData.end(), offset_byte, offset_byte + sizeof(offset_byte));
+	cmdData.insert(cmdData.end(), len_byte, len_byte + sizeof(len_byte));
+    cmdData.insert(cmdData.end(), sendData.begin(), sendData.end());
 
     while (retries != 0)
     {
@@ -162,17 +164,15 @@ int getChksumFW(uint8_t slotId, uint8_t netFun, uint32_t cmdGetFWChksum,
 {
     std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
     int retries = MAX_RETRY;
+	uint8_t len_byte[4];
+    uint8_t offset_byte[4];
+    *(uint32_t*)&offset_byte = offset;
+	*(uint32_t*)&len_byte = len; 
 
     // Fill the component for which firmware is requested
     cmdData.push_back(updateCmd);
-    cmdData.push_back((offset) & 0xFF);
-    cmdData.push_back((offset >> 8) & 0xFF);
-    cmdData.push_back((offset >> 16) & 0xFF);
-    cmdData.push_back((offset >> 24) & 0xFF);
-    cmdData.push_back(len & 0xFF);
-    cmdData.push_back((len >> 8) & 0xFF);
-    cmdData.push_back((len >> 16) & 0xFF);
-    cmdData.push_back((len >> 24) & 0xFF);
+	cmdData.insert(cmdData.end(), offset_byte, offset_byte + sizeof(offset_byte));
+	cmdData.insert(cmdData.end(), len_byte, len_byte + sizeof(len_byte));
 
     while (retries !=0)
     {
@@ -200,12 +200,14 @@ Description      : Set Me to recovery mode
 */
 int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
 {
-    std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2, BIC_INTF_ME,
-                                 ME_RECOVERY_CMD_0, ME_RECOVERY_CMD_1,
-                                 ME_RECOVERY_CMD_2, ME_RECOVERY_CMD_3,
-                                 ME_RECOVERY_CMD_4, mode};
+    std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2, BIC_INTF_ME};
     std::vector<uint8_t> respData;
     int retries = MAX_RETRY;
+	uint8_t me_recovery_cmd = {ME_RECOVERY_CMD_0, ME_RECOVERY_CMD_1, 
+							   ME_RECOVERY_CMD_2, ME_RECOVERY_CMD_3, ME_RECOVERY_CMD_4};
+
+	cmdData.insert(cmdData.end(), me_recovery_cmd, me_recovery_cmd + sizeof(me_recovery_cmd))
+	cmdData.push_back(mode);
 
     while (retries != 0)
     {
