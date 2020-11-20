@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/asio/object_server.hpp>
+#include "fb_yv2_misc.hpp"
 
 #include <filesystem>
 #include <string_view>
@@ -34,7 +35,6 @@
 #include <vector>
 #include <iterator>
 
-#define MAX_RETRY 3
 
 std::shared_ptr<sdbusplus::asio::connection> conn;
 static boost::asio::io_service io;
@@ -88,7 +88,7 @@ int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
                std::vector<uint8_t> &sendData, uint32_t offset, uint8_t updateCmd)
 {
 
-    std::vector<uint8_t> cmdData{0x15, 0xa0, 0}; //--> can we make the constants into defines with IANA ID or something like this?
+    std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
     std::vector<uint8_t> respData;
     int retries = MAX_RETRY;
     int ret = 0;
@@ -160,8 +160,8 @@ int getChksumFW(uint8_t slotId, uint8_t netFun, uint32_t cmdGetFWChksum,
                 uint32_t offset, uint32_t len, std::vector<uint8_t> &respData,
                 uint8_t updateCmd)
 {
-    std::vector<uint8_t> cmdData{0x15, 0xa0, 0};
-    int retries = 3;
+    std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
+    int retries = MAX_RETRY;
 
     // Fill the component for which firmware is requested
     cmdData.push_back(updateCmd);
@@ -200,23 +200,16 @@ Description      : Set Me to recovery mode
 */
 int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
 {
-    std::vector<uint8_t> cmdData{0x15, 0xa0, 0};
+    std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2, BIC_INTF_ME,
+                                 ME_RECOVERY_CMD_0, ME_RECOVERY_CMD_1,
+                                 ME_RECOVERY_CMD_2, ME_RECOVERY_CMD_3,
+                                 ME_RECOVERY_CMD_4, mode};
     std::vector<uint8_t> respData;
-    uint8_t bic_intf_me = 0x1;
     int retries = MAX_RETRY;
-
-    cmdData.push_back(bic_intf_me);
-    cmdData.push_back(0xB8); //--> can be define?
-    cmdData.push_back(0xDF);
-    cmdData.push_back(0x57);
-    cmdData.push_back(0x01);
-    cmdData.push_back(0x00);
-    cmdData.push_back(mode);
 
     while (retries != 0)
     {
         sendIPMBRequest(slotId, netFun, cmdME, cmdData, respData);
-        std::cerr << "Me: respData.size " << respData.size() << "\n";
         if (respData.size() !=6)
         {
             sleep(0.001);
@@ -253,12 +246,10 @@ int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
     }
 
     // Verify whether ME went to recovery mode
-    std::vector<uint8_t> meData{0x15, 0xa0, 0};
+    std::vector<uint8_t> meData{IANA_ID_0, IANA_ID_1, IANA_ID_2, BIC_INTF_ME,
+                                VERIFY_ME_RECV_CMD_0, VERIFY_ME_RECV_CMD_1};
     std::vector<uint8_t> meResp;
-    meData.push_back(bic_intf_me);
-    meData.push_back(0x18);
-    meData.push_back(0x04);
-    retries = 3;
+    retries = MAX_RETRY;
 
     while (retries != 0)
     {
@@ -298,11 +289,11 @@ int updateFw(uint8_t slotId, const char* imagePath, uint8_t updateCmd)
     std::cerr << "Bios update bin file path " << imagePath <<"\n";
 
     // Read the binary data from bin file
-    int count            = 0;
-    int cmdFw             = 9;
+    int count             = 0x0;
+    int cmdFw             = 0x9;
     uint8_t cmdME         = 0x2;
-    uint32_t offset     = 0;
-    uint8_t netFun         = 0x38;
+    uint32_t offset       = 0x0;
+    uint8_t netFun        = 0x38;
     uint8_t recoveryMode  = 0x1;
     uint32_t ipmbWriteMax = 128;
 
@@ -326,7 +317,7 @@ int updateFw(uint8_t slotId, const char* imagePath, uint8_t updateCmd)
         fileSize = file.tellg();
         std::cerr << "Total Filesize " << fileSize <<"\n";
         file.seekg(0, std::ios::beg);
-         int i = 1;
+        int i = 1;
 
         while (offset < fileSize)
         {
@@ -334,9 +325,9 @@ int updateFw(uint8_t slotId, const char* imagePath, uint8_t updateCmd)
             // count details
             uint32_t count = ipmbWriteMax;
 
-            if ((offset+ipmbWriteMax) >= (i * (64*1024)))
+            if ((offset+ipmbWriteMax) >= (i * BIOS_64k_SIZE))
             {
-                count = (i * (64*1024)) - offset;
+                count = (i * BIOS_64k_SIZE) - offset;
                 i++;
             }
 
@@ -359,7 +350,7 @@ int updateFw(uint8_t slotId, const char* imagePath, uint8_t updateCmd)
 
         // Check for bios image
         uint32_t offset_d = 0;
-        uint32_t biosVerifyPktSize = (32*1024);
+        uint32_t biosVerifyPktSize = BIOS_32k_SIZE;
 
         file.seekg(0, std::ios::beg);
         std::cerr << "Verify Bios image...\n";
@@ -423,7 +414,7 @@ int main(int argc, char* argv[])
 
     // Get the arguments
     const char* binFile = argv[1];
-    uint8_t slotId         = (int) (argv[2]);
+    uint8_t slotId      = (int) (argv[2]);
     uint8_t updateCmd   = (int) (argv[3]);
 
     std::cerr << "Bin File Path " << binFile << "\n";
@@ -431,8 +422,8 @@ int main(int argc, char* argv[])
     int ret = updateFw(slotId, binFile, updateCmd);
     if (ret != 0)
     {
-    std::cerr << "IPMB Based Bios upgrade failed for slot#" << +slotId << "\n";
-    return -1;
+        std::cerr << "IPMB Based Bios upgrade failed for slot#" << +slotId << "\n";
+        return -1;
     }
 
     std::cerr << "IPMB Based Bios upgrade completed successfully for slot#" << +slotId << "\n";
