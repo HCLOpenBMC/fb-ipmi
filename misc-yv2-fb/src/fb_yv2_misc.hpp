@@ -37,3 +37,9 @@
 #define BIOS_64k_SIZE (64*1024)
 #define BIOS_32k_SIZE (32*1024)
 
+#define UPDATE_BIOS 0
+#define UPDATE_CPLD 1
+#define UPDATE_BIC_BOOTLOADER 3
+#define UPDATE_BIC 4
+#define UPDATE_VR 5
+
