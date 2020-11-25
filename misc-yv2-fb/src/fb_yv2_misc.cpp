@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 #include <systemd/sd-journal.h>
 #include <phosphor-logging/log.hpp>
+#include <boost/asio/io_service.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/container/flat_set.hpp>
@@ -30,8 +31,10 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <stdlib.h>
 
 std::shared_ptr<sdbusplus::asio::connection> conn;
+static boost::asio::io_service io;
 static constexpr uint8_t lun = 0;
 
 using respType =
@@ -63,7 +66,6 @@ int sendIPMBRequest(uint8_t host, uint8_t netFn, uint8_t cmd,
 
     respData =
         std::move(std::get<std::remove_reference_t<decltype(respData)>>(resp));
-
     respData.insert(respData.begin(), std::get<4>(resp));
 
     if (respData.size() <= 0)
@@ -91,10 +93,10 @@ int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
     uint8_t len_byte[2];
     uint8_t offset_byte[4];
     *(uint32_t *)&offset_byte = offset;
-    *(uint32_t *)&len_byte = sendData.size();
+    *(uint16_t *)&len_byte = sendData.size();
     int retries = MAX_RETRY;
 
-    // Fill the component for which firmware is requested
+    // Frame the send vector data
     cmdData.push_back(updateCmd);
     cmdData.insert(cmdData.end(), offset_byte, offset_byte + sizeof(offset_byte));
     cmdData.insert(cmdData.end(), len_byte, len_byte + sizeof(len_byte));
@@ -105,30 +107,22 @@ int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
         sendIPMBRequest(slotId, netFun, cmdFw, cmdData, respData);
         uint8_t retStatus = respData[0];
 
-        if (retStatus == 0) {
-            std::cerr << "Data Sent successfully \n";
+        if ((retStatus == 0) && (respData[1] == 0x15)){
             break;
         } else if (retStatus == 0x80) {
-            sleep(0.001);
-            std::cerr << "Write Flash Error!! slot:" << slotId << " Offset:" << offset
-                  << " len:" << sendData.size() << "Retrying.....\n";
+            std::cerr << "Write Flash Error!!";
         } else if (retStatus == 0x81) {
-            sleep(0.001);
-            std::cerr << "Power status check Fail!! slot:" << slotId
-                << " Offset:" << offset << " len:" << sendData.size()
-                << "Retrying.....\n";
+            std::cerr << "Power status check Fail!!";
         } else if (retStatus == 0x82) {
-            sleep(0.001);
-            std::cerr << "Data length Error!! slot:" << slotId << " Offset:" << offset
-                << " len:" << sendData.size() << "Retrying.....\n";
+            std::cerr << "Data length Error!!";
         } else if (retStatus == 0x83) {
-            sleep(0.001);
-            std::cerr << "Flash Erase Error!! slot:" << slotId << " Offset:" << offset
-                << " len:" << sendData.size() << "Retrying.....\n";
+            std::cerr << "Flash Erase Error!!";
         } else {
-            sleep(0.001);
-            std::cerr << "Invalid Data... Retrying....\n";
+            std::cerr << "Invalid Data...";
         }
+        sleep(0.001);
+        std::cerr << " slot:" << slotId << " Offset:" << offset
+                  << " len:" << sendData.size() << "Retrying.....\n";
         retries--;
     }
 
@@ -157,7 +151,7 @@ int getChksumFW(uint8_t slotId, uint8_t netFun, uint32_t cmdGetFWChksum,
     *(uint32_t *)&offset_byte = offset;
     *(uint32_t *)&len_byte = len;
 
-    // Fill the component for which firmware is requested
+    // Frame the send vector data
     cmdData.push_back(updateCmd);
     cmdData.insert(cmdData.end(), offset_byte, offset_byte + sizeof(offset_byte));
     cmdData.insert(cmdData.end(), len_byte, len_byte + sizeof(len_byte));
@@ -197,6 +191,7 @@ int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
                                  ME_RECOVERY_CMD_2, ME_RECOVERY_CMD_3,
                                  ME_RECOVERY_CMD_4};
 
+    // Frame the send vector data
     cmdData.insert(cmdData.end(), me_recovery_cmd,
                    me_recovery_cmd + sizeof(me_recovery_cmd));
     cmdData.push_back(mode);
@@ -205,22 +200,19 @@ int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
     {
         sendIPMBRequest(slotId, netFun, cmdME, cmdData, respData);
         if (respData.size() != 6) {
-            sleep(0.001);
             std::cerr << "ME is not set into recovery mode.. Retrying... \n";
         } else if (respData[3] != cmdData[3]) {
-            sleep(0.001);
             std::cerr << "Interface not valid.. Retrying...  \n";
         } else if (respData[0] == 0) {
-            sleep(0.001);
             std::cerr << "ME recovery mode -> Completion Status set.. \n";
             break;
         } else if (respData[0] != 0) {
-            sleep(0.001);
             std::cerr << "ME recovery mode -> Completion Status not set.. Retrying..\n";
         } else {
             sleep(0.001);
             std::cerr << "Invalid data or command... \n";
         }
+        sleep(0.001);
         retries--;
     }
 
@@ -267,7 +259,7 @@ int getCpldUpdateProgress(uint8_t slotId, uint8_t netFun, uint8_t cmdId,
                           std::vector<uint8_t> &respData)
 {
     // Declarations
-    std::vector<uint8_t> cmdData{0x15, 0xa0, 0};
+    std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
     int ret;
     int retries = 0;
 
@@ -473,12 +465,14 @@ int updateFw(uint8_t slotId, const char *imagePath, uint8_t updateCmd)
 
 int main(int argc, char *argv[])
 {
+    conn = std::make_shared<sdbusplus::asio::connection>(io);
     // Get the arguments
     const char *binFile = argv[1];
-    uint8_t slotId = (int)(argv[2]);
-    uint8_t updateCmd = (int)(argv[3]);
+    uint8_t slotId = atoi(argv[2]);
+    uint8_t updateCmd = atoi(argv[3]);
 
     std::cerr << "Bin File Path " << binFile << "\n";
+    std::cerr << "UpdateCmd " << +updateCmd << "\n";
     std::cerr << "IPMB Based Bios Upgrade Started for slot#" << +slotId << "\n";
     int ret = updateFw(slotId, binFile, updateCmd);
     if (ret != 0)
