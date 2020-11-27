@@ -40,6 +40,14 @@ static constexpr uint8_t lun = 0;
 using respType =
     std::tuple<int, uint8_t, uint8_t, uint8_t, uint8_t, std::vector<uint8_t>>;
 
+
+void print_help()
+{
+    std::cerr << "The input format should be like below\n";
+    std::cerr << "<file_name> <bin_file_path> <host1/2/3/4> <--update> <bios/cpld/bridgeIC/VR>\n";
+}
+
+
 /*
 Function Name    : sendIPMBRequest
 Description      : Send data to target through Ipmb
@@ -77,12 +85,11 @@ int sendIPMBRequest(uint8_t host, uint8_t netFn, uint8_t cmd,
 
 
 /*
-Function Name    : sendFWData
+Function Name    : sendFirmwareUpdateData
 Description      : Form vectors with required data to send
 */
-int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
-               std::vector<uint8_t> &sendData, uint32_t offset,
-               uint8_t updateCmd)
+int sendFirmwareUpdateData(uint8_t slotId, std::vector<uint8_t> &sendData,
+                           uint32_t offset, uint8_t target)
 {
     // Vector declaration
     std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
@@ -97,25 +104,26 @@ int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
     int retries = MAX_RETRY;
 
     // Frame the send vector data
-    cmdData.push_back(updateCmd);
+    cmdData.push_back(target);
     cmdData.insert(cmdData.end(), offset_byte, offset_byte + sizeof(offset_byte));
     cmdData.insert(cmdData.end(), len_byte, len_byte + sizeof(len_byte));
     cmdData.insert(cmdData.end(), sendData.begin(), sendData.end());
 
+    std::cerr << "sendFirmwareUpdateData started\n";
     while (retries != 0)
     {
-        sendIPMBRequest(slotId, netFun, cmdFw, cmdData, respData);
+        sendIPMBRequest(slotId, NET_FN, FIRMWARE_UPDATE_ID, cmdData, respData);
         uint8_t retStatus = respData[0];
 
-        if ((retStatus == 0) && (respData[1] == 0x15)){
+        if ((retStatus == 0) && (respData[1] == IANA_ID_0)){
             break;
-        } else if (retStatus == 0x80) {
+        } else if (retStatus == WRITE_FLASH_ERR) {
             std::cerr << "Write Flash Error!!";
-        } else if (retStatus == 0x81) {
+        } else if (retStatus == POWER_STS_CHK_ERR) {
             std::cerr << "Power status check Fail!!";
-        } else if (retStatus == 0x82) {
+        } else if (retStatus == DATA_LEN_ERR) {
             std::cerr << "Data length Error!!";
-        } else if (retStatus == 0x83) {
+        } else if (retStatus == FLASH_ERASE_ERR) {
             std::cerr << "Flash Erase Error!!";
         } else {
             std::cerr << "Invalid Data...";
@@ -131,6 +139,7 @@ int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
         std::cerr << "Error!!! Not able to send bios data!!! \n";
         return -1;
     }
+    std::cerr << "sendFirmwareUpdateData Done\n";
   return 0;
 }
 
@@ -139,9 +148,8 @@ int sendFWData(uint8_t slotId, uint8_t netFun, int cmdFw,
 Function Name    : getChksumFW
 Description      : Get the checksum value of bios image
 */
-int getChksumFW(uint8_t slotId, uint8_t netFun, uint32_t cmdGetFWChksum,
-                uint32_t offset, uint32_t len, std::vector<uint8_t> &respData,
-                uint8_t updateCmd)
+int getChksumFW(uint8_t slotId, uint32_t offset, uint32_t len,
+                std::vector<uint8_t> &respData, uint8_t target)
 {
     // Declaration
     std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
@@ -152,14 +160,14 @@ int getChksumFW(uint8_t slotId, uint8_t netFun, uint32_t cmdGetFWChksum,
     *(uint32_t *)&len_byte = len;
 
     // Frame the send vector data
-    cmdData.push_back(updateCmd);
+    cmdData.push_back(target);
     cmdData.insert(cmdData.end(), offset_byte, offset_byte + sizeof(offset_byte));
     cmdData.insert(cmdData.end(), len_byte, len_byte + sizeof(len_byte));
 
     while (retries != 0)
     {
-        sendIPMBRequest(slotId, netFun, cmdGetFWChksum, cmdData, respData);
-        if (respData.size() != 6)
+        sendIPMBRequest(slotId, NET_FN, GET_FW_CHK_SUM, cmdData, respData);
+        if (respData.size() != RESP_SIZE)
         {
             sleep(0.001);
             std::cerr << "Checksum not obtained properly for slot:" << slotId
@@ -181,7 +189,7 @@ int getChksumFW(uint8_t slotId, uint8_t netFun, uint32_t cmdGetFWChksum,
 Function Name    : meRecovery
 Description      : Set Me to recovery mode
 */
-int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
+int meRecovery(uint8_t slotId, uint8_t mode)
 {
     // Declarations
     std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2, BIC_INTF_ME};
@@ -196,10 +204,11 @@ int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
                    me_recovery_cmd + sizeof(me_recovery_cmd));
     cmdData.push_back(mode);
 
+    std::cerr << "Starting ME recovery mode\n";
     while (retries != 0)
     {
-        sendIPMBRequest(slotId, netFun, cmdME, cmdData, respData);
-        if (respData.size() != 6) {
+        sendIPMBRequest(slotId, NET_FN, ME_RECOVERY_ID, cmdData, respData);
+        if (respData.size() != RESP_SIZE) {
             std::cerr << "ME is not set into recovery mode.. Retrying... \n";
         } else if (respData[3] != cmdData[3]) {
             std::cerr << "Interface not valid.. Retrying...  \n";
@@ -234,7 +243,7 @@ int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
 
     while (retries != 0)
     {
-        sendIPMBRequest(slotId, netFun, cmdME, meData, meResp);
+        sendIPMBRequest(slotId, NET_FN, ME_RECOVERY_ID, meData, meResp);
         if (meResp[3] != meData[3])
         {
             sleep(0.001);
@@ -251,21 +260,21 @@ int meRecovery(uint8_t slotId, uint8_t netFun, uint8_t cmdME, uint8_t mode)
         std::cerr << "Failed to set ME to recovery mode in self tests.. \n";
         return -1;
     }
+    std::cerr << "ME is set to recovery mode\n";
     return 0;
 }
 
 
-int getCpldUpdateProgress(uint8_t slotId, uint8_t netFun, uint8_t cmdId,
-                          std::vector<uint8_t> &respData)
+int getCpldUpdateProgress(uint8_t slotId, std::vector<uint8_t> &respData)
 {
     // Declarations
     std::vector<uint8_t> cmdData{IANA_ID_0, IANA_ID_1, IANA_ID_2};
     int ret;
     int retries = 0;
 
-    while (retries != 3)
+    while (retries != MAX_RETRY)
     {
-        ret = sendIPMBRequest(slotId, netFun, cmdId, cmdData, respData);
+        ret = sendIPMBRequest(slotId, NET_FN, GET_CPLD_UPDATE_PROGRESS, cmdData, respData);
         if (ret)
         {
             sleep(0.001);
@@ -278,7 +287,7 @@ int getCpldUpdateProgress(uint8_t slotId, uint8_t netFun, uint8_t cmdId,
         }
     }
 
-    if (retries == 3)
+    if (retries == MAX_RETRY)
     {
         std::cerr << "Failed to set response.. \n";
         return -1;
@@ -287,8 +296,7 @@ int getCpldUpdateProgress(uint8_t slotId, uint8_t netFun, uint8_t cmdId,
 }
 
 
-int biosVerify(const char *imagePath, uint8_t slotId, uint8_t netFun,
-               uint8_t cmdGetFWChksum, uint8_t updateCmd)
+int biosVerifyImage(const char *imagePath, uint8_t slotId, uint8_t target)
 {
     // Check for bios image
     uint32_t offset_d = 0;
@@ -305,6 +313,7 @@ int biosVerify(const char *imagePath, uint8_t slotId, uint8_t netFun,
     {
         file.seekg(0, std::ios::beg);
 
+        std::cerr << "Starting Bios image verification\n";
         while (offset_d < fileSize)
         {
             // Read the data
@@ -326,8 +335,8 @@ int biosVerify(const char *imagePath, uint8_t slotId, uint8_t netFun,
            uint8_t retValue;
            std::vector<uint8_t> fwChksumData;
 
-           retValue = getChksumFW(slotId, netFun, cmdGetFWChksum, offset_d,
-                                  biosVerifyPktSize, fwChksumData, updateCmd);
+           retValue = getChksumFW(slotId, NET_FN, GET_FW_CHK_SUM, offset_d,
+                                  biosVerifyPktSize, fwChksumData, target);
            if (retValue != 0)
            {
                std::cerr << "Failed to get the Checksum value!! \n";
@@ -347,36 +356,31 @@ int biosVerify(const char *imagePath, uint8_t slotId, uint8_t netFun,
            }
            offset_d += biosVerifyPktSize;
         }
+        std::cerr << "Bios image verification done..\n";
         file.close();
-    } else
+    } else {
     std::cerr << "Unable to open file";
+    }
     return 0;
 }
 
 
 /*
-Function Name   : updateFw
+Function Name   : updateFirmwareTarget
 Description     : Send data to respective target for FW udpate
 Param: slotId   : Slot Id
 Param: imagePath: Binary image path
-Param: updateCmd: cmd Id to find the target (BIOS, CPLD, VR, ME)
+Param: target: cmd Id to find the target (BIOS, CPLD, VR, ME)
 */
-int updateFw(uint8_t slotId, const char *imagePath, uint8_t updateCmd)
+int updateFirmwareTarget(uint8_t slotId, const char *imagePath, uint8_t target)
 {
-    std::cerr << "Bios update bin file path " << imagePath << "\n";
-
     // Read the binary data from bin file
     int count = 0x0;
-    int cmdFw = 0x9;
-    uint8_t cmdME   = 0x2;
     uint32_t offset = 0x0;
-    uint8_t netFun  = 0x38;
-    uint8_t recoveryMode    = 0x1;
-    uint32_t ipmbWriteMax   = 128;
-    uint32_t cmdGetFWChksum = 0xA;
+    uint32_t ipmbWriteMax  = IPMB_WRITE_128B;
 
     // Set ME to recovery mode
-    int ret_val = meRecovery(slotId, netFun, cmdME, recoveryMode);
+    int ret_val = meRecovery(slotId, ME_RECOVERY_MODE);
     if (ret_val != 0)
     {
         std::cerr << "Me set to recovery mode failed\n";
@@ -393,6 +397,13 @@ int updateFw(uint8_t slotId, const char *imagePath, uint8_t updateCmd)
         // Get its size
         fileSize = file.tellg();
         std::cerr << "Total Filesize " << fileSize << "\n";
+
+        // Check whether the image is valid
+        if (fileSize <= 0)
+        {
+            std::cerr << "Invalid File\n";
+            return -1;
+        }
         file.seekg(0, std::ios::beg);
         int i = 1;
 
@@ -413,7 +424,7 @@ int updateFw(uint8_t slotId, const char *imagePath, uint8_t updateCmd)
             file.read((char *)&fileData[0], ipmbWriteMax);
 
             // Send data
-            int ret = sendFWData(slotId, netFun, cmdFw, fileData, offset, updateCmd);
+            int ret = sendFirmwareUpdateData(slotId, fileData, offset, target);
             if (ret != 0)
             {
                 std::cerr << "Firmware update Failed at offset " << offset << "\n";
@@ -424,31 +435,31 @@ int updateFw(uint8_t slotId, const char *imagePath, uint8_t updateCmd)
             offset += count;
         }
         file.close();
-    } else
+    } else {
     std::cerr << "Unable to open file";
+    }
 
-    if (updateCmd == UPDATE_BIOS)
+    if (target == UPDATE_BIOS)
     {
-        int ret = biosVerify(imagePath, slotId, netFun, cmdGetFWChksum, updateCmd);
+        int ret = biosVerifyImage(imagePath, slotId, target);
         if (ret) {
             return -1;
         }
     }
 
-    if (updateCmd == UPDATE_CPLD)
+    if (target == UPDATE_CPLD)
     {
         std::vector<uint8_t> respData;
-        uint8_t cmdId = 0x1A;
 
         for (int i = 0; i < 60; i++)
         {
             // wait 60s at most
-            int ret = getCpldUpdateProgress(slotId, netFun, cmdId, respData);
+            int ret = getCpldUpdateProgress(slotId, respData);
             if (ret) {
                 return -1;
             }
 
-            if (respData[4] == 0xFD) { // error code
+            if (respData[4] == CPLD_ERR_CODE) {
                 return -1;
             }
 
@@ -463,24 +474,99 @@ int updateFw(uint8_t slotId, const char *imagePath, uint8_t updateCmd)
 }
 
 
-int main(int argc, char *argv[])
+int cpldUpdateFw(uint8_t slotId, const char *imagePath)
 {
-    conn = std::make_shared<sdbusplus::asio::connection>(io);
-    // Get the arguments
-    const char *binFile = argv[1];
-    uint8_t slotId = atoi(argv[2]);
-    uint8_t updateCmd = atoi(argv[3]);
-
-    std::cerr << "Bin File Path " << binFile << "\n";
-    std::cerr << "UpdateCmd " << +updateCmd << "\n";
-    std::cerr << "IPMB Based Bios Upgrade Started for slot#" << +slotId << "\n";
-    int ret = updateFw(slotId, binFile, updateCmd);
+    int ret = updateFirmwareTarget(slotId, imagePath, UPDATE_CPLD);
     if (ret != 0)
     {
-        std::cerr << "IPMB Based Bios upgrade failed for slot#" << +slotId << "\n";
+        std::cerr << "CPLD update failed for slot #" << +slotId << "\n";
         return -1;
     }
-    std::cerr << "IPMB Based Bios upgrade completed successfully for slot#"
+    std::cerr << "CPLD update completed successfully for slot#"
               << +slotId << "\n";
+    return 0;
+}
+
+
+int hostBiosUpdateFw(uint8_t slotId, const char *imagePath)
+{
+    int ret = updateFirmwareTarget(slotId, imagePath, UPDATE_BIOS);
+    if (ret != 0)
+    {
+        std::cerr << "BIOS update failed for slot #" << +slotId << "\n";
+        return -1;
+    }
+    std::cerr << "BIOS update completed successfully for slot#"
+              << +slotId << "\n";
+    return 0;
+}
+
+
+int updateFw(char *argv[], uint8_t slotId)
+{
+    const char *binFile = argv[1];
+    // Check for the FW udpate
+    if (strcmp(argv[3], "--update") == 0)
+    {
+        if (strcmp(argv[4], "bios") == 0)
+        {
+            int ret = hostBiosUpdateFw(slotId, binFile);
+            if (ret != 0)
+            {
+                std::cerr << "BIOS update failed for slot #" << +slotId << "\n";
+                return -1;
+            }
+
+        } else if (strcmp(argv[4], "cpld") == 0) {
+            int ret = cpldUpdateFw(slotId, binFile);
+            if (ret != 0)
+            {
+                std::cerr << "CPLD update failed for slot #" << +slotId << "\n";
+                return -1;
+            }
+
+        } else {
+            std::cerr << "Invalid Update command\n";
+            print_help();
+            return -1;
+        }
+    }
+    return 0;
+}
+
+
+int main(int argc, char *argv[])
+{
+    // command -> fb_yv2_misc binfile host1 --update bios/cpld
+
+    conn = std::make_shared<sdbusplus::asio::connection>(io);
+    // Get the arguments
+    uint8_t slotId;
+
+    // Check for the host name
+    if(strcmp(argv[2], "host1") == 0) {
+        slotId = HOST_1;
+    } else if (strcmp(argv[2], "host2") == 0) {
+        slotId = HOST_2;
+    } else if (strcmp(argv[2], "host3") == 0) {
+        slotId = HOST_3;
+    } else if (strcmp(argv[2], "host4") == 0) {
+        slotId = HOST_4;
+    } else {
+        std::cerr << "Invalid host number\n";
+        print_help();
+        return -1;
+    }
+
+    // Update the FW
+    int ret = updateFw(argv, slotId);
+    if (ret != 0)
+    {
+        std::cerr << "FW update failed for slot #" << +slotId << "\n";
+        return -1;
+    }
+    std::cerr << "FW update completed successfully for slot#"
+              << +slotId << "\n";
+
     return 0;
 }

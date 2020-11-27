@@ -32,6 +32,7 @@
 
 #define VERIFY_ME_RECV_CMD_0 0x18
 #define VERIFY_ME_RECV_CMD_1 0x04
+#define ME_RECOVERY_MODE 0x1
 
 // BIOS SIZE
 #define BIOS_64k_SIZE (64*1024)
@@ -42,4 +43,29 @@
 #define UPDATE_BIC_BOOTLOADER 3
 #define UPDATE_BIC 4
 #define UPDATE_VR 5
+
+// Host Numbers
+#define HOST_1 0
+#define HOST_2 1
+#define HOST_3 2
+#define HOST_4 3
+
+// Command Id
+#define ME_RECOVERY_ID 0x2
+#define GET_FW_CHK_SUM 0xA
+#define FIRMWARE_UPDATE_ID 0x9
+#define GET_CPLD_UPDATE_PROGRESS 0x1A
+
+// Error Codes
+#define WRITE_FLASH_ERR   0x80
+#define POWER_STS_CHK_ERR 0x81
+#define DATA_LEN_ERR      0x82
+#define FLASH_ERASE_ERR   0x83
+#define CPLD_ERR_CODE     0xFD
+
+// General declarations
+#define RESP_SIZE 6
+#define NET_FN 0x38
+#define IPMB_WRITE_128B 128
+
 
